@@ -339,7 +339,10 @@ async def create_token(token_data: TokenCreate, current_user: dict = Depends(get
     return {"message": "Token created successfully", "token": token_doc}
 
 @app.post("/api/payment/initialize")
-async def initialize_payment(action: str, token_id: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+async def initialize_payment(payment_data: dict, current_user: dict = Depends(get_current_user)):
+    action = payment_data.get("action")
+    token_id = payment_data.get("token_id")
+    
     # Calculate amount based on action
     if action == "token":
         if current_user["tokens_owned"] >= 5:
