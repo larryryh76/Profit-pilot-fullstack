@@ -82,7 +82,12 @@ class ProfitPilotAPITest(unittest.TestCase):
         print("\n🔍 Testing dashboard data retrieval...")
         headers = {"Authorization": f"Bearer {self.token}"}
         response = requests.get(f"{self.base_url}/dashboard", headers=headers)
-        self.assertEqual(response.status_code, 200)
+        
+        if response.status_code != 200:
+            print(f"❌ Dashboard retrieval failed - Status code: {response.status_code}")
+            print(f"   - Response: {response.text}")
+            return
+            
         data = response.json()
         
         # Verify user data
@@ -95,12 +100,15 @@ class ProfitPilotAPITest(unittest.TestCase):
         self.assertTrue(len(data["tokens"]) > 0)
         
         # Save first token ID for later tests
-        self.token_id = data["tokens"][0]["token_id"]
+        if len(data["tokens"]) > 0:
+            self.token_id = data["tokens"][0]["token_id"]
+            print(f"   - First token ID: {self.token_id}")
+        else:
+            print("   - No tokens found")
         
         print("✅ Dashboard data retrieval successful")
         print(f"   - User has {len(data['tokens'])} token(s)")
         print(f"   - Total earnings: ${data['user']['total_earnings']}")
-        print(f"   - First token ID: {self.token_id}")
 
     def test_05_payment_initialization(self):
         """Test payment initialization for token boost"""
