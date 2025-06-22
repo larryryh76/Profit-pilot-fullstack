@@ -101,8 +101,11 @@ class ProfitPilotAPITest(unittest.TestCase):
         """Test payment initialization for token boost"""
         print("\n🔍 Testing payment initialization for token boost...")
         headers = {"Authorization": f"Bearer {self.token}"}
-        params = {"action": "boost", "token_id": self.token_id}
-        response = requests.post(f"{self.base_url}/payment/initialize", json=params, headers=headers)
+        response = requests.post(
+            f"{self.base_url}/payment/initialize", 
+            params={"action": "boost", "token_id": self.token_id},
+            headers=headers
+        )
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertIn("authorization_url", data)
