@@ -17,11 +17,19 @@ from threading import Timer
 import logging
 
 # Environment variables
-MONGO_URL = os.getenv("MONGO_URL", "mongodb://localhost:27017")
+MONGO_URL = os.getenv("MONGO_URI", "mongodb://localhost:27017")  # Render uses MONGO_URI
 DB_NAME = os.getenv("DB_NAME", "profitpilot")
-JWT_SECRET = "SuperSecretKey123"
-PAYSTACK_SECRET_KEY = "sk_live_b41107e30aa0682bdfbf68a60dbc3b49da6da6fa"
-PAYSTACK_PUBLIC_KEY = "pk_live_561c88fdbc97f356950fc7d9881101e4cb074707"
+
+# Secrets
+JWT_SECRET = os.getenv("JWT_SECRET", "SuperSecretKey123")  # Secure fallback for local dev
+PAYSTACK_SECRET_KEY = os.getenv(
+    "PAYSTACK_SECRET_KEY",
+    "sk_live_b41107e30aa0682bdfbf68a60dbc3b49da6da6fa"
+)
+PAYSTACK_PUBLIC_KEY = os.getenv(
+    "PAYSTACK_PUBLIC_KEY",
+    "pk_live_561c88fdbc97f356950fc7d9881101e4cb074707"
+)
 
 # FastAPI app
 app = FastAPI(title="ProfitPilot API", version="1.0.0")
@@ -29,7 +37,7 @@ app = FastAPI(title="ProfitPilot API", version="1.0.0")
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Allow all origins (adjust in production if needed)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -39,13 +47,16 @@ app.add_middleware(
 try:
     client = MongoClient(MONGO_URL)
     db = client[DB_NAME]
+
+    # Collections
     users_collection = db.users
     tokens_collection = db.tokens
     transactions_collection = db.transactions
     referrals_collection = db.referrals
-    print(f"Connected to MongoDB: {MONGO_URL}")
+
+    print(f"✅ Connected to MongoDB at: {MONGO_URL}")
 except Exception as e:
-    print(f"MongoDB connection error: {e}")
+    print("❌ MongoDB connection failed:", e)
 
 # Password hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
