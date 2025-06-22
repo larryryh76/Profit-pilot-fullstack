@@ -92,8 +92,13 @@ function App() {
       );
       
       // Redirect to Paystack
-      window.location.href = response.data.authorization_url;
+      if (response.data.authorization_url) {
+        window.location.href = response.data.authorization_url;
+      } else {
+        alert('Payment initialization failed - no authorization URL received');
+      }
     } catch (error) {
+      console.error('Payment error:', error);
       alert(error.response?.data?.detail || 'Payment initialization failed');
     } finally {
       setLoading(false);
