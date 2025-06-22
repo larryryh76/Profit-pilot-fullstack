@@ -55,6 +55,10 @@ class ProfitPilotAPITest(unittest.TestCase):
         print(f"✅ User registration successful - Email: {self.test_email}")
         print(f"   - User ID: {self.user_id}")
         print(f"   - Referral Code: {self.referral_code}")
+        print(f"   - Token: {self.token[:10]}...")  # Print first 10 chars of token
+        
+        # Add a small delay to ensure token is processed
+        time.sleep(1)
 
     def test_03_user_login(self):
         """Test user login"""
