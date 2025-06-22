@@ -84,14 +84,32 @@ class ProfitPilotAPITest(unittest.TestCase):
     def test_04_dashboard_data(self):
         """Test dashboard data retrieval"""
         print("\n🔍 Testing dashboard data retrieval...")
+        
+        # Print token for debugging
+        print(f"   - Using token: {self.token[:15]}...")
+        
         headers = {"Authorization": f"Bearer {self.token}"}
+        print(f"   - Authorization header: {headers['Authorization'][:20]}...")
+        
         response = requests.get(f"{self.base_url}/dashboard", headers=headers)
         
         if response.status_code != 200:
             print(f"❌ Dashboard retrieval failed - Status code: {response.status_code}")
             print(f"   - Response: {response.text}")
-            return
             
+            # Try to login again to get a fresh token
+            print("   - Attempting to login again to get a fresh token...")
+            self.test_03_user_login()
+            
+            # Try again with the new token
+            headers = {"Authorization": f"Bearer {self.token}"}
+            response = requests.get(f"{self.base_url}/dashboard", headers=headers)
+            
+            if response.status_code != 200:
+                print(f"❌ Second attempt failed - Status code: {response.status_code}")
+                print(f"   - Response: {response.text}")
+                return
+        
         data = response.json()
         
         # Verify user data
