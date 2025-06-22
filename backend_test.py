@@ -110,9 +110,12 @@ class ProfitPilotAPITest(unittest.TestCase):
             
         headers = {"Authorization": f"Bearer {self.token}"}
         
-        # Using query parameters instead of JSON body
-        url = f"{self.base_url}/payment/initialize?action=boost&token_id={self.token_id}"
-        response = requests.post(url, headers=headers)
+        # Using JSON body as per the API implementation
+        payload = {
+            "action": "boost",
+            "token_id": self.token_id
+        }
+        response = requests.post(f"{self.base_url}/payment/initialize", json=payload, headers=headers)
         
         if response.status_code != 200:
             print(f"❌ Payment initialization failed - Status code: {response.status_code}")
@@ -126,6 +129,32 @@ class ProfitPilotAPITest(unittest.TestCase):
         self.assertIn("amount_ngn", data)
         
         print("✅ Payment initialization successful")
+        print(f"   - Payment amount: ${data['amount_usd']} (₦{data['amount_ngn']})")
+        print(f"   - Payment URL: {data['authorization_url']}")
+        
+    def test_05b_token_payment_initialization(self):
+        """Test payment initialization for token purchase"""
+        print("\n🔍 Testing payment initialization for token purchase...")
+        headers = {"Authorization": f"Bearer {self.token}"}
+        
+        # Using JSON body for token purchase
+        payload = {
+            "action": "token"
+        }
+        response = requests.post(f"{self.base_url}/payment/initialize", json=payload, headers=headers)
+        
+        if response.status_code != 200:
+            print(f"❌ Token payment initialization failed - Status code: {response.status_code}")
+            print(f"   - Response: {response.text}")
+            return
+            
+        data = response.json()
+        self.assertIn("authorization_url", data)
+        self.assertIn("reference", data)
+        self.assertIn("amount_usd", data)
+        self.assertIn("amount_ngn", data)
+        
+        print("✅ Token payment initialization successful")
         print(f"   - Payment amount: ${data['amount_usd']} (₦{data['amount_ngn']})")
         print(f"   - Payment URL: {data['authorization_url']}")
 
