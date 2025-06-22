@@ -75,6 +75,7 @@ class ProfitPilotAPITest(unittest.TestCase):
         
         print(f"✅ User login successful - Email: {self.test_email}")
         print(f"   - User ID: {data['user_id']}")
+        print(f"   - Token: {self.token[:10]}...")  # Print first 10 chars of token
 
     def test_04_dashboard_data(self):
         """Test dashboard data retrieval"""
