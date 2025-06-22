@@ -239,6 +239,7 @@ def run_tests():
     test_suite.addTest(ProfitPilotAPITest('test_03_user_login'))
     test_suite.addTest(ProfitPilotAPITest('test_04_dashboard_data'))
     test_suite.addTest(ProfitPilotAPITest('test_05_payment_initialization'))
+    test_suite.addTest(ProfitPilotAPITest('test_05b_token_payment_initialization'))
     test_suite.addTest(ProfitPilotAPITest('test_06_leaderboard'))
     test_suite.addTest(ProfitPilotAPITest('test_07_admin_login'))
     test_suite.addTest(ProfitPilotAPITest('test_09_non_admin_access'))
