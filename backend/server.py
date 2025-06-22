@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi import FastAPI, HTTPException, Depends, status, BackgroundTasks
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from pymongo import MongoClient
@@ -13,15 +13,15 @@ import hashlib
 import hmac
 from typing import Optional, List
 import asyncio
-from threading import Timer
 import logging
+from contextlib import asynccontextmanager
 
 # Environment variables
-MONGO_URL = os.getenv("MONGO_URI", "mongodb://localhost:27017")  # Render uses MONGO_URI
+MONGO_URL = os.getenv("MONGO_URI", "mongodb://localhost:27017")
 DB_NAME = os.getenv("DB_NAME", "profitpilot")
 
 # Secrets
-JWT_SECRET = os.getenv("JWT_SECRET", "SuperSecretKey123")  # Secure fallback for local dev
+JWT_SECRET = os.getenv("JWT_SECRET", "SuperSecretKey123")
 PAYSTACK_SECRET_KEY = os.getenv(
     "PAYSTACK_SECRET_KEY",
     "sk_live_b41107e30aa0682bdfbf68a60dbc3b49da6da6fa"
@@ -31,17 +31,15 @@ PAYSTACK_PUBLIC_KEY = os.getenv(
     "pk_live_561c88fdbc97f356950fc7d9881101e4cb074707"
 )
 
-# FastAPI app
-app = FastAPI(title="ProfitPilot API", version="1.0.0")
-
-# CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins (adjust in production if needed)
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
+logger = logging.getLogger(__name__)
+
+# Global mining task variable
+mining_task = None
 
 # MongoDB connection
 try:
@@ -53,10 +51,11 @@ try:
     tokens_collection = db.tokens
     transactions_collection = db.transactions
     referrals_collection = db.referrals
+    mining_logs_collection = db.mining_logs
 
-    print(f"✅ Connected to MongoDB at: {MONGO_URL}")
+    logger.info(f"✅ Connected to MongoDB at: {MONGO_URL}")
 except Exception as e:
-    print("❌ MongoDB connection failed:", e)
+    logger.error(f"❌ MongoDB connection failed: {e}")
 
 # Password hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -135,50 +134,158 @@ def verify_paystack_signature(signature, body, secret):
     hash_object = hmac.new(secret.encode('utf-8'), body, hashlib.sha512)
     return hash_object.hexdigest() == signature
 
-# Mining system
+# Fixed Mining system
 async def process_mining():
     """Process mining for all active tokens every 2 hours"""
     try:
+        logger.info("🚀 Starting mining process...")
         tokens = list(tokens_collection.find({"active": True}))
-        for token in tokens:
-            # Calculate earnings based on boost level
-            base_earning = 0.70
-            boost_level = token.get('boost_level', 0)
-            earning = base_earning * (2 ** boost_level)
-            
-            # Update token earnings
-            tokens_collection.update_one(
-                {"token_id": token["token_id"]},
-                {
-                    "$inc": {"total_earnings": earning},
-                    "$set": {"last_mining": datetime.utcnow()},
-                    "$push": {"mining_history": {
-                        "amount": earning,
-                        "timestamp": datetime.utcnow(),
-                        "boost_level": boost_level
-                    }}
-                }
-            )
-            
-            # Update user total earnings
-            users_collection.update_one(
-                {"user_id": token["owner_id"]},
-                {"$inc": {"total_earnings": earning}}
-            )
+        total_tokens_processed = 0
+        total_earnings_distributed = 0.0
         
-        print(f"Mining processed for {len(tokens)} tokens")
+        for token in tokens:
+            try:
+                # Calculate earnings based on boost level
+                base_earning = 0.70
+                boost_level = token.get('boost_level', 0)
+                earning = base_earning * (2 ** boost_level)
+                
+                # Update token earnings
+                tokens_collection.update_one(
+                    {"token_id": token["token_id"]},
+                    {
+                        "$inc": {"total_earnings": earning},
+                        "$set": {"last_mining": datetime.utcnow()},
+                        "$push": {"mining_history": {
+                            "amount": earning,
+                            "timestamp": datetime.utcnow(),
+                            "boost_level": boost_level
+                        }}
+                    }
+                )
+                
+                # Update user total earnings
+                users_collection.update_one(
+                    {"user_id": token["owner_id"]},
+                    {"$inc": {"total_earnings": earning}}
+                )
+                
+                total_tokens_processed += 1
+                total_earnings_distributed += earning
+                
+                logger.info(f"💰 Token {token['name']} (Level {boost_level}) earned ${earning:.2f}")
+                
+            except Exception as token_error:
+                logger.error(f"❌ Error processing token {token.get('token_id', 'unknown')}: {token_error}")
+        
+        # Log mining session
+        mining_logs_collection.insert_one({
+            "timestamp": datetime.utcnow(),
+            "tokens_processed": total_tokens_processed,
+            "total_earnings_distributed": total_earnings_distributed,
+            "status": "success"
+        })
+        
+        logger.info(f"✅ Mining completed! Processed {total_tokens_processed} tokens, distributed ${total_earnings_distributed:.2f}")
+        
     except Exception as e:
-        print(f"Mining error: {e}")
+        logger.error(f"❌ Mining error: {e}")
+        # Log failed mining attempt
+        mining_logs_collection.insert_one({
+            "timestamp": datetime.utcnow(),
+            "tokens_processed": 0,
+            "total_earnings_distributed": 0.0,
+            "status": "failed",
+            "error": str(e)
+        })
 
-# Start mining timer
-def start_mining_timer():
-    Timer(7200.0, lambda: asyncio.create_task(process_mining())).start()  # 2 hours
-    start_mining_timer()
+async def mining_scheduler():
+    """Background task that runs mining every 2 hours"""
+    logger.info("⏰ Mining scheduler started - will run every 2 hours")
+    
+    while True:
+        try:
+            await process_mining()
+            # Wait for 2 hours (7200 seconds)
+            await asyncio.sleep(7200)
+        except Exception as e:
+            logger.error(f"❌ Mining scheduler error: {e}")
+            # Wait 10 minutes before retry if there's an error
+            await asyncio.sleep(600)
+
+# Lifespan event handler
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    logger.info("🚀 ProfitPilot API starting...")
+    
+    # Start the mining background task
+    global mining_task
+    mining_task = asyncio.create_task(mining_scheduler())
+    logger.info("⛏️ Mining system initialized")
+    
+    # Run initial mining after 30 seconds (for testing)
+    asyncio.create_task(asyncio.sleep(30))
+    asyncio.create_task(process_mining())
+    
+    yield
+    
+    # Shutdown
+    logger.info("🛑 ProfitPilot API shutting down...")
+    if mining_task:
+        mining_task.cancel()
+        try:
+            await mining_task
+        except asyncio.CancelledError:
+            logger.info("⛏️ Mining task cancelled")
+
+# FastAPI app with lifespan
+app = FastAPI(
+    title="ProfitPilot API", 
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # API Routes
 @app.get("/api/health")
 async def health_check():
-    return {"status": "healthy", "timestamp": datetime.utcnow()}
+    return {
+        "status": "healthy", 
+        "timestamp": datetime.utcnow(),
+        "mining_status": "active" if mining_task and not mining_task.done() else "inactive"
+    }
+
+@app.post("/api/admin/trigger-mining")
+async def trigger_mining(current_user: dict = Depends(get_current_user)):
+    """Manual mining trigger for testing (admin only)"""
+    if not current_user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    await process_mining()
+    return {"message": "Mining process triggered successfully"}
+
+@app.get("/api/admin/mining-logs")
+async def get_mining_logs(current_user: dict = Depends(get_current_user)):
+    """Get recent mining logs (admin only)"""
+    if not current_user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    logs = list(mining_logs_collection.find({}).sort("timestamp", -1).limit(20))
+    
+    # Convert ObjectId to string for JSON serialization
+    for log in logs:
+        log['_id'] = str(log['_id'])
+    
+    return {"mining_logs": logs}
 
 @app.post("/api/register")
 async def register_user(user_data: UserRegister):
@@ -203,7 +310,7 @@ async def register_user(user_data: UserRegister):
         "boosts_used": 0,
         "referrals_count": 0,
         "created_at": datetime.utcnow(),
-        "withdrawal_eligible_at": datetime.utcnow() + timedelta(days=180),  # 6 months
+        "withdrawal_eligible_at": datetime.utcnow() + timedelta(days=180),
         "is_admin": user_data.email == "larryryh76@gmail.com"
     }
     
@@ -219,6 +326,12 @@ async def register_user(user_data: UserRegister):
                 {
                     "$inc": {"referral_earnings": 2.0, "total_earnings": 2.0, "referrals_count": 1}
                 }
+            )
+            
+            # Add $2 to new user as well
+            users_collection.update_one(
+                {"user_id": user_id},
+                {"$inc": {"referral_earnings": 2.0, "total_earnings": 2.0}}
             )
             
             # Log referral
@@ -254,6 +367,8 @@ async def register_user(user_data: UserRegister):
     # Create access token
     access_token = create_access_token(data={"sub": user_id})
     
+    logger.info(f"✅ New user registered: {user_id} ({user_data.email})")
+    
     return {
         "message": "User registered successfully",
         "access_token": access_token,
@@ -285,19 +400,22 @@ async def get_dashboard(current_user: dict = Depends(get_current_user)):
         last_mining = max([t.get("last_mining", t["created_at"]) for t in tokens])
         next_mining = last_mining + timedelta(hours=2)
     
+    # Get fresh user data (in case earnings were updated)
+    fresh_user = users_collection.find_one({"user_id": current_user["user_id"]})
+    
     return {
         "user": {
-            "user_id": current_user["user_id"],
-            "email": current_user["email"],
-            "total_earnings": current_user["total_earnings"],
-            "referral_earnings": current_user["referral_earnings"],
-            "tokens_owned": current_user["tokens_owned"],
-            "boosts_used": current_user["boosts_used"],
-            "referrals_count": current_user["referrals_count"],
-            "referral_code": current_user["referral_code"],
-            "created_at": current_user["created_at"],
-            "withdrawal_eligible_at": current_user["withdrawal_eligible_at"],
-            "is_admin": current_user.get("is_admin", False)
+            "user_id": fresh_user["user_id"],
+            "email": fresh_user["email"],
+            "total_earnings": fresh_user["total_earnings"],
+            "referral_earnings": fresh_user["referral_earnings"],
+            "tokens_owned": fresh_user["tokens_owned"],
+            "boosts_used": fresh_user["boosts_used"],
+            "referrals_count": fresh_user["referrals_count"],
+            "referral_code": fresh_user["referral_code"],
+            "created_at": fresh_user["created_at"],
+            "withdrawal_eligible_at": fresh_user["withdrawal_eligible_at"],
+            "is_admin": fresh_user.get("is_admin", False)
         },
         "tokens": [
             {
@@ -307,14 +425,14 @@ async def get_dashboard(current_user: dict = Depends(get_current_user)):
                 "total_earnings": token["total_earnings"],
                 "created_at": token["created_at"],
                 "last_mining": token.get("last_mining"),
-                "hourly_rate": 0.70 * (2 ** token["boost_level"]) / 2  # Per hour rate
+                "hourly_rate": 0.70 * (2 ** token["boost_level"]) / 2
             }
             for token in tokens
         ],
         "next_mining": next_mining,
         "stats": {
             "active_assets": len(tokens),
-            "total_balance": current_user["total_earnings"],
+            "total_balance": fresh_user["total_earnings"],
             "mining_rate": sum([0.70 * (2 ** t["boost_level"]) for t in tokens])
         }
     }
@@ -512,7 +630,7 @@ async def get_leaderboard():
         "top_earners": [
             {
                 "user_id": user["user_id"],
-                "email": user["email"][:3] + "***" + user["email"][-10:],  # Anonymize
+                "email": user["email"][:3] + "***" + user["email"][-10:],
                 "total_earnings": user["total_earnings"],
                 "tokens_owned": user["tokens_owned"],
                 "boosts_used": user["boosts_used"]
@@ -524,7 +642,7 @@ async def get_leaderboard():
                 "name": token["name"],
                 "boost_level": token["boost_level"],
                 "total_earnings": token["total_earnings"],
-                "owner_id": token["owner_id"][:8] + "***"  # Anonymize
+                "owner_id": token["owner_id"][:8] + "***"
             }
             for token in top_tokens
         ]
@@ -551,12 +669,6 @@ async def get_admin_stats(current_user: dict = Depends(get_current_user)):
         "recent_users": list(users_collection.find({}).sort("created_at", -1).limit(5)),
         "recent_transactions": list(transactions_collection.find({}).sort("timestamp", -1).limit(10))
     }
-
-# Start mining when server starts
-@app.on_event("startup")
-async def startup_event():
-    print("ProfitPilot API started")
-    print("Mining system will run every 2 hours")
 
 if __name__ == "__main__":
     import uvicorn
