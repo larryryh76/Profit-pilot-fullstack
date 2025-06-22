@@ -1,38 +1,157 @@
-.App {
-    text-align: center;
+@import 'tailwindcss/base';
+@import 'tailwindcss/components';
+@import 'tailwindcss/utilities';
+
+/* Custom gradient backgrounds */
+.gradient-primary {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
 }
 
-.App-logo {
-    height: 40vmin;
-    pointer-events: none;
+.gradient-success {
+  background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
 }
 
-@media (prefers-reduced-motion: no-preference) {
-    .App-logo {
-        animation: App-logo-spin infinite 20s linear;
-    }
+.gradient-warning {
+  background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
 }
 
-.App-header {
-    background-color: #0f0f10;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    font-size: calc(10px + 2vmin);
-    color: white;
+/* Custom card shadows */
+.card-shadow {
+  box-shadow: 0 10px 25px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
 }
 
-.App-link {
-    color: #61dafb;
+/* Animation utilities */
+.fade-in {
+  animation: fadeIn 0.5s ease-in-out;
 }
 
-@keyframes App-logo-spin {
-    from {
-        transform: rotate(0deg);
-    }
-    to {
-        transform: rotate(360deg);
-    }
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #888;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+/* Responsive text */
+@media (max-width: 640px) {
+  .text-responsive-xl {
+    font-size: 1.5rem;
+  }
+  .text-responsive-2xl {
+    font-size: 1.75rem;
+  }
+  .text-responsive-3xl {
+    font-size: 2rem;
+  }
+  .text-responsive-4xl {
+    font-size: 2.25rem;
+  }
+}
+
+/* Button hover effects */
+.btn-primary {
+  @apply bg-gradient-to-r from-blue-600 to-purple-600 text-white font-medium py-2 px-6 rounded-lg transition-all duration-200 hover:shadow-lg hover:scale-105;
+}
+
+.btn-secondary {
+  @apply bg-gray-100 text-gray-700 font-medium py-2 px-6 rounded-lg transition-all duration-200 hover:bg-gray-200 hover:shadow-md;
+}
+
+/* Loading animation */
+.loading-spinner {
+  border: 2px solid #f3f3f3;
+  border-top: 2px solid #3498db;
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Custom focus styles */
+.focus-ring {
+  @apply focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2;
+}
+
+/* Mobile-first responsive design */
+.mobile-padding {
+  @apply px-4 sm:px-6 lg:px-8;
+}
+
+/* Status indicators */
+.status-active {
+  @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800;
+}
+
+.status-pending {
+  @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800;
+}
+
+.status-inactive {
+  @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800;
+}
+
+/* Typography improvements */
+.text-balance {
+  text-wrap: balance;
+}
+
+/* Grid improvements */
+.grid-auto-fit {
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+}
+
+/* Interactive elements */
+.interactive-card {
+  @apply transition-all duration-200 hover:shadow-lg hover:-translate-y-1 cursor-pointer;
+}
+
+/* Crypto-style number formatting */
+.crypto-number {
+  font-feature-settings: 'tnum';
+  font-variant-numeric: tabular-nums;
+}
+
+/* Professional spacing */
+.section-spacing {
+  @apply py-12 sm:py-16 lg:py-20;
+}
+
+/* Background patterns */
+.bg-pattern-dots {
+  background-image: radial-gradient(circle, rgba(0,0,0,0.1) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+.bg-pattern-grid {
+  background-image: 
+    linear-gradient(rgba(0,0,0,0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,0,0,0.05) 1px, transparent 1px);
+  background-size: 20px 20px;
 }
