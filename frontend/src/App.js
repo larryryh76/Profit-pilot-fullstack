@@ -34,6 +34,7 @@ function App() {
 
   const fetchDashboard = async (token = null) => {
     try {
+      setLoading(true);
       const authToken = token || localStorage.getItem('profitpilot_token');
       const response = await axios.get(`${BACKEND_URL}/api/dashboard`, {
         headers: { Authorization: `Bearer ${authToken}` }
@@ -43,8 +44,14 @@ function App() {
       setShowAuth(false);
     } catch (error) {
       console.error('Dashboard fetch error:', error);
-      localStorage.removeItem('profitpilot_token');
-      setShowAuth(true);
+      if (error.response?.status === 401) {
+        localStorage.removeItem('profitpilot_token');
+        setShowAuth(true);
+      } else {
+        alert('Failed to load dashboard data');
+      }
+    } finally {
+      setLoading(false);
     }
   };
 
