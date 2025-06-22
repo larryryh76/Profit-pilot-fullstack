@@ -253,12 +253,24 @@ function App() {
                 <span className="text-white text-lg font-bold">P</span>
               </div>
               <span className="ml-3 text-xl font-bold text-gray-800">ProfitPilot</span>
+              <span className="ml-2 text-xs bg-green-100 text-green-600 px-2 py-1 rounded-full font-medium">LIVE</span>
             </div>
             <div className="flex items-center space-x-4">
-              <span className="text-sm text-gray-600">{currentUser?.email}</span>
+              <div className="hidden md:flex items-center space-x-2 bg-gray-50 rounded-lg px-3 py-1">
+                <span className="text-sm text-gray-600">Balance:</span>
+                <span className="text-sm font-bold text-green-600">{formatCurrency(currentUser?.total_earnings || 0)}</span>
+              </div>
+              <div className="hidden md:flex items-center space-x-2 bg-blue-50 rounded-lg px-3 py-1">
+                <span className="text-sm text-gray-600">Tokens:</span>
+                <span className="text-sm font-bold text-blue-600">{currentUser?.tokens_owned || 0}/5</span>
+              </div>
+              <div className="text-right">
+                <div className="text-sm font-medium text-gray-800">{currentUser?.user_id}</div>
+                <div className="text-xs text-gray-500">{currentUser?.email}</div>
+              </div>
               <button
                 onClick={handleLogout}
-                className="text-sm text-red-600 hover:text-red-700"
+                className="bg-red-50 hover:bg-red-100 text-red-600 text-sm px-3 py-2 rounded-lg font-medium transition-colors"
               >
                 Logout
               </button>
