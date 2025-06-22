@@ -542,8 +542,7 @@ async def get_admin_stats(current_user: dict = Depends(get_current_user)):
 @app.on_event("startup")
 async def startup_event():
     print("ProfitPilot API started")
-    # Start mining timer
-    start_mining_timer()
+    print("Mining system will run every 2 hours")
 
 if __name__ == "__main__":
     import uvicorn
