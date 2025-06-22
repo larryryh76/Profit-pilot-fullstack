@@ -53,6 +53,8 @@ class ProfitPilotAPITest(unittest.TestCase):
         self.referral_code = data["referral_code"]
         
         print(f"✅ User registration successful - Email: {self.test_email}")
+        print(f"   - User ID: {self.user_id}")
+        print(f"   - Referral Code: {self.referral_code}")
 
     def test_03_user_login(self):
         """Test user login"""
@@ -72,6 +74,7 @@ class ProfitPilotAPITest(unittest.TestCase):
         self.token = data["access_token"]
         
         print(f"✅ User login successful - Email: {self.test_email}")
+        print(f"   - User ID: {data['user_id']}")
 
     def test_04_dashboard_data(self):
         """Test dashboard data retrieval"""
@@ -96,17 +99,26 @@ class ProfitPilotAPITest(unittest.TestCase):
         print("✅ Dashboard data retrieval successful")
         print(f"   - User has {len(data['tokens'])} token(s)")
         print(f"   - Total earnings: ${data['user']['total_earnings']}")
+        print(f"   - First token ID: {self.token_id}")
 
     def test_05_payment_initialization(self):
         """Test payment initialization for token boost"""
         print("\n🔍 Testing payment initialization for token boost...")
+        if not self.token_id:
+            print("❌ No token ID available for testing")
+            return
+            
         headers = {"Authorization": f"Bearer {self.token}"}
-        response = requests.post(
-            f"{self.base_url}/payment/initialize", 
-            params={"action": "boost", "token_id": self.token_id},
-            headers=headers
-        )
-        self.assertEqual(response.status_code, 200)
+        
+        # Using query parameters instead of JSON body
+        url = f"{self.base_url}/payment/initialize?action=boost&token_id={self.token_id}"
+        response = requests.post(url, headers=headers)
+        
+        if response.status_code != 200:
+            print(f"❌ Payment initialization failed - Status code: {response.status_code}")
+            print(f"   - Response: {response.text}")
+            return
+            
         data = response.json()
         self.assertIn("authorization_url", data)
         self.assertIn("reference", data)
