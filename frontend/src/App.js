@@ -9,18 +9,26 @@ function App() {
   const [currentUser, setCurrentUser] = useState(null);
   const [activeTab, setActiveTab] = useState('home');
   const [profileSubTab, setProfileSubTab] = useState('account');
+  const [adminSubTab, setAdminSubTab] = useState('overview');
   const [dashboardData, setDashboardData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [showAuth, setShowAuth] = useState(false);
   const [authMode, setAuthMode] = useState('login');
   const [leaderboardData, setLeaderboardData] = useState(null);
   const [adminStats, setAdminStats] = useState(null);
+  const [adminUsers, setAdminUsers] = useState([]);
+  const [adminTasks, setAdminTasks] = useState([]);
+  const [adminBroadcasts, setAdminBroadcasts] = useState([]);
+  const [selectedUser, setSelectedUser] = useState(null);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState(0);
   const [miningCountdown, setMiningCountdown] = useState('');
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [notifications, setNotifications] = useState([]);
+  const [userNotifications, setUserNotifications] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [lastEarnings, setLastEarnings] = useState(0);
+  const [userTasks, setUserTasks] = useState([]);
 
   // Auth form state
   const [authForm, setAuthForm] = useState({
@@ -34,6 +42,36 @@ function App() {
     currentPassword: '',
     newPassword: '',
     confirmPassword: ''
+  });
+
+  // Admin forms
+  const [sendBalanceForm, setSendBalanceForm] = useState({
+    user_id: '',
+    amount: '',
+    reason: ''
+  });
+
+  const [createTaskForm, setCreateTaskForm] = useState({
+    title: '',
+    description: '',
+    reward: '',
+    type: 'one_time',
+    requirements: '',
+    expires_at: ''
+  });
+
+  const [giveBoostForm, setGiveBoostForm] = useState({
+    user_id: '',
+    token_id: '',
+    boost_levels: 1,
+    reason: ''
+  });
+
+  const [broadcastForm, setBroadcastForm] = useState({
+    title: '',
+    message: '',
+    type: 'info',
+    priority: 'medium'
   });
 
   // Check for existing token and handle referral on app load
@@ -63,6 +101,7 @@ function App() {
     if (!showAuth && currentUser) {
       const interval = setInterval(() => {
         fetchDashboard();
+        fetchUserNotifications();
       }, 60000);
 
       return () => clearInterval(interval);
@@ -117,6 +156,12 @@ function App() {
       if (response.data.user.tokens_owned === 1 && !localStorage.getItem('onboarding_completed')) {
         setShowOnboarding(true);
       }
+
+      // Fetch notifications for users
+      if (!response.data.user.is_admin) {
+        fetchUserNotifications(authToken);
+        fetchUserTasks(authToken);
+      }
     } catch (error) {
       console.error('Dashboard fetch error:', error);
       if (error.response?.status === 401) {
@@ -127,6 +172,58 @@ function App() {
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchUserNotifications = async (token = null) => {
+    try {
+      const authToken = token || localStorage.getItem('profitpilot_token');
+      const response = await axios.get(`${BACKEND_URL}/api/notifications`, {
+        headers: { Authorization: `Bearer ${authToken}` }
+      });
+      setUserNotifications(response.data.notifications);
+      setUnreadCount(response.data.unread_count);
+    } catch (error) {
+      console.error('Notifications fetch error:', error);
+    }
+  };
+
+  const fetchUserTasks = async (token = null) => {
+    try {
+      const authToken = token || localStorage.getItem('profitpilot_token');
+      const response = await axios.get(`${BACKEND_URL}/api/tasks`, {
+        headers: { Authorization: `Bearer ${authToken}` }
+      });
+      setUserTasks(response.data.tasks);
+    } catch (error) {
+      console.error('Tasks fetch error:', error);
+    }
+  };
+
+  const markNotificationRead = async (notificationId) => {
+    try {
+      const token = localStorage.getItem('profitpilot_token');
+      await axios.post(`${BACKEND_URL}/api/notifications/${notificationId}/read`, {}, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      fetchUserNotifications();
+    } catch (error) {
+      console.error('Mark notification read error:', error);
+    }
+  };
+
+  const completeTask = async (taskId) => {
+    try {
+      const token = localStorage.getItem('profitpilot_token');
+      const response = await axios.post(`${BACKEND_URL}/api/tasks/complete`, 
+        { task_id: taskId },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      showNotification(response.data.message, 'success');
+      fetchUserTasks();
+      fetchDashboard();
+    } catch (error) {
+      showNotification(error.response?.data?.detail || 'Failed to complete task', 'error');
     }
   };
 
@@ -206,23 +303,6 @@ function App() {
     }
   };
 
-  const handlePasswordChange = async (e) => {
-    e.preventDefault();
-    if (profileForm.newPassword !== profileForm.confirmPassword) {
-      showNotification('Passwords do not match', 'error');
-      return;
-    }
-
-    try {
-      setLoading(true);
-      showNotification('Password change feature coming soon!', 'info');
-    } catch (error) {
-      showNotification('Password change failed', 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const triggerMining = async () => {
     try {
       setLoading(true);
@@ -241,14 +321,9 @@ function App() {
     }
   };
 
-  const fetchLeaderboard = async () => {
-    try {
-      const response = await axios.get(`${BACKEND_URL}/api/leaderboard`);
-      setLeaderboardData(response.data);
-    } catch (error) {
-      console.error('Leaderboard fetch error:', error);
-    }
-  };
+  // ============================================================================
+  // ADMIN FUNCTIONS
+  // ============================================================================
 
   const fetchAdminStats = async () => {
     try {
@@ -262,16 +337,163 @@ function App() {
     }
   };
 
+  const fetchAdminUsers = async () => {
+    try {
+      const token = localStorage.getItem('profitpilot_token');
+      const response = await axios.get(`${BACKEND_URL}/api/admin/users`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setAdminUsers(response.data.users);
+    } catch (error) {
+      console.error('Admin users fetch error:', error);
+    }
+  };
+
+  const fetchUserDetails = async (userId) => {
+    try {
+      const token = localStorage.getItem('profitpilot_token');
+      const response = await axios.get(`${BACKEND_URL}/api/admin/users/${userId}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setSelectedUser(response.data);
+    } catch (error) {
+      console.error('User details fetch error:', error);
+    }
+  };
+
+  const fetchAdminTasks = async () => {
+    try {
+      const token = localStorage.getItem('profitpilot_token');
+      const response = await axios.get(`${BACKEND_URL}/api/admin/tasks`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setAdminTasks(response.data.tasks);
+    } catch (error) {
+      console.error('Admin tasks fetch error:', error);
+    }
+  };
+
+  const fetchAdminBroadcasts = async () => {
+    try {
+      const token = localStorage.getItem('profitpilot_token');
+      const response = await axios.get(`${BACKEND_URL}/api/admin/broadcasts`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setAdminBroadcasts(response.data.broadcasts);
+    } catch (error) {
+      console.error('Admin broadcasts fetch error:', error);
+    }
+  };
+
+  const handleSendBalance = async (e) => {
+    e.preventDefault();
+    try {
+      setLoading(true);
+      const token = localStorage.getItem('profitpilot_token');
+      const response = await axios.post(`${BACKEND_URL}/api/admin/send-balance`, sendBalanceForm, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      showNotification(response.data.message, 'success');
+      setSendBalanceForm({ user_id: '', amount: '', reason: '' });
+      fetchAdminUsers();
+    } catch (error) {
+      showNotification(error.response?.data?.detail || 'Failed to send balance', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCreateTask = async (e) => {
+    e.preventDefault();
+    try {
+      setLoading(true);
+      const token = localStorage.getItem('profitpilot_token');
+      const taskData = {
+        ...createTaskForm,
+        reward: parseFloat(createTaskForm.reward),
+        expires_at: createTaskForm.expires_at ? new Date(createTaskForm.expires_at).toISOString() : null
+      };
+      const response = await axios.post(`${BACKEND_URL}/api/admin/create-task`, taskData, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      showNotification(response.data.message, 'success');
+      setCreateTaskForm({ title: '', description: '', reward: '', type: 'one_time', requirements: '', expires_at: '' });
+      fetchAdminTasks();
+    } catch (error) {
+      showNotification(error.response?.data?.detail || 'Failed to create task', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGiveBoost = async (e) => {
+    e.preventDefault();
+    try {
+      setLoading(true);
+      const token = localStorage.getItem('profitpilot_token');
+      const boostData = {
+        ...giveBoostForm,
+        boost_levels: parseInt(giveBoostForm.boost_levels)
+      };
+      const response = await axios.post(`${BACKEND_URL}/api/admin/give-boost`, boostData, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      showNotification(response.data.message, 'success');
+      setGiveBoostForm({ user_id: '', token_id: '', boost_levels: 1, reason: '' });
+      fetchAdminUsers();
+    } catch (error) {
+      showNotification(error.response?.data?.detail || 'Failed to give boost', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleBroadcast = async (e) => {
+    e.preventDefault();
+    try {
+      setLoading(true);
+      const token = localStorage.getItem('profitpilot_token');
+      const response = await axios.post(`${BACKEND_URL}/api/admin/broadcast`, broadcastForm, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      showNotification(response.data.message, 'success');
+      setBroadcastForm({ title: '', message: '', type: 'info', priority: 'medium' });
+      fetchAdminBroadcasts();
+    } catch (error) {
+      showNotification(error.response?.data?.detail || 'Failed to send broadcast', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchLeaderboard = async () => {
+    try {
+      const response = await axios.get(`${BACKEND_URL}/api/leaderboard`);
+      setLeaderboardData(response.data);
+    } catch (error) {
+      console.error('Leaderboard fetch error:', error);
+    }
+  };
+
   useEffect(() => {
     if (activeTab === 'board' && !leaderboardData) {
       fetchLeaderboard();
     }
-    if (activeTab === 'admin' && currentUser?.is_admin && !adminStats) {
-      fetchAdminStats();
+    if (activeTab === 'admin' && currentUser?.is_admin) {
+      if (adminSubTab === 'overview' && !adminStats) {
+        fetchAdminStats();
+      } else if (adminSubTab === 'users' && adminUsers.length === 0) {
+        fetchAdminUsers();
+      } else if (adminSubTab === 'tasks' && adminTasks.length === 0) {
+        fetchAdminTasks();
+      } else if (adminSubTab === 'broadcasts' && adminBroadcasts.length === 0) {
+        fetchAdminBroadcasts();
+      }
     }
-  }, [activeTab]);
+  }, [activeTab, adminSubTab]);
 
   const formatCurrency = (amount) => {
+    if (amount === Infinity) return '∞ USD';
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency: 'USD'
@@ -434,6 +656,8 @@ function App() {
             { id: 'home', icon: '🏠', label: 'Dashboard', desc: 'Overview & stats' },
             { id: 'tokens', icon: '🪙', label: 'My Tokens', desc: 'Manage mining assets' },
             { id: 'boost', icon: '⚡', label: 'Boost Center', desc: 'Upgrade tokens' },
+            { id: 'tasks', icon: '🎯', label: 'Tasks', desc: 'Complete & earn' },
+            { id: 'notifications', icon: '🔔', label: 'Notifications', desc: `${unreadCount} unread` },
             { id: 'referrals', icon: '🤝', label: 'Referrals', desc: 'Invite friends' },
             { id: 'profile', icon: '👤', label: 'Profile', desc: 'Account settings' },
             { id: 'board', icon: '🏆', label: 'Leaderboard', desc: 'Top performers' },
@@ -458,6 +682,25 @@ function App() {
               </div>
             </button>
           ))}
+          {currentUser?.is_admin && (
+            <button
+              onClick={() => {
+                setActiveTab('admin');
+                setShowMobileMenu(false);
+              }}
+              className={`w-full text-left p-3 rounded-lg transition-colors ${
+                activeTab === 'admin' ? 'bg-blue-50 text-blue-600' : 'text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              <div className="flex items-center space-x-3">
+                <span className="text-xl">⚙️</span>
+                <div>
+                  <div className="font-medium">Admin Panel</div>
+                  <div className="text-sm text-gray-500">System management</div>
+                </div>
+              </div>
+            </button>
+          )}
         </nav>
       </div>
     </div>
@@ -583,6 +826,9 @@ function App() {
                 </div>
                 <span className="ml-3 text-xl font-bold text-gray-800">ProfitPilot</span>
                 <span className="ml-2 text-xs bg-green-100 text-green-600 px-2 py-1 rounded-full font-medium">LIVE</span>
+                {currentUser?.is_admin && (
+                  <span className="ml-2 text-xs bg-purple-100 text-purple-600 px-2 py-1 rounded-full font-medium">ADMIN</span>
+                )}
                 
                 <div className="ml-2 flex items-center space-x-1">
                   <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
@@ -592,11 +838,23 @@ function App() {
             </div>
 
             <div className="flex items-center space-x-2 sm:space-x-4">
-              {miningCountdown && (
+              {!currentUser?.is_admin && miningCountdown && (
                 <div className="hidden sm:flex items-center space-x-2 bg-orange-50 rounded-lg px-3 py-1">
                   <span className="text-sm text-orange-600">Next:</span>
                   <span className="text-sm font-bold text-orange-600">{miningCountdown}</span>
                 </div>
+              )}
+
+              {!currentUser?.is_admin && unreadCount > 0 && (
+                <button
+                  onClick={() => setActiveTab('notifications')}
+                  className="relative bg-blue-50 hover:bg-blue-100 text-blue-600 text-sm px-3 py-2 rounded-lg font-medium transition-colors"
+                >
+                  🔔
+                  <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                    {unreadCount}
+                  </span>
+                </button>
               )}
 
               <div className="hidden md:flex items-center space-x-2 bg-gray-50 rounded-lg px-3 py-1">
@@ -604,10 +862,12 @@ function App() {
                 <span className="text-sm font-bold text-green-600">{formatCurrency(currentUser?.total_earnings || 0)}</span>
               </div>
               
-              <div className="hidden sm:flex items-center space-x-2 bg-blue-50 rounded-lg px-3 py-1">
-                <span className="text-sm text-gray-600">Tokens:</span>
-                <span className="text-sm font-bold text-blue-600">{currentUser?.tokens_owned || 0}/5</span>
-              </div>
+              {!currentUser?.is_admin && (
+                <div className="hidden sm:flex items-center space-x-2 bg-blue-50 rounded-lg px-3 py-1">
+                  <span className="text-sm text-gray-600">Tokens:</span>
+                  <span className="text-sm font-bold text-blue-600">{currentUser?.tokens_owned || 0}/5</span>
+                </div>
+              )}
 
               {currentUser?.is_admin && (
                 <button
@@ -642,8 +902,12 @@ function App() {
           <div className="flex space-x-8">
             {[
               { id: 'home', icon: '🏠', label: 'Dashboard' },
-              { id: 'tokens', icon: '🪙', label: 'My Tokens' },
-              { id: 'boost', icon: '⚡', label: 'Boost Center' },
+              ...(currentUser?.is_admin ? [] : [
+                { id: 'tokens', icon: '🪙', label: 'My Tokens' },
+                { id: 'boost', icon: '⚡', label: 'Boost Center' },
+                { id: 'tasks', icon: '🎯', label: 'Tasks' },
+                { id: 'notifications', icon: '🔔', label: `Notifications${unreadCount > 0 ? ` (${unreadCount})` : ''}` }
+              ]),
               { id: 'referrals', icon: '🤝', label: 'Referrals' },
               { id: 'profile', icon: '👤', label: 'Profile' },
               { id: 'board', icon: '🏆', label: 'Leaderboard' },
@@ -670,7 +934,7 @@ function App() {
                 }`}
                 onClick={() => setActiveTab('admin')}
               >
-                ⚙️ Admin
+                ⚙️ Admin Panel
               </button>
             )}
           </div>
@@ -682,8 +946,13 @@ function App() {
         <div className="grid grid-cols-5 gap-1">
           {[
             { id: 'home', icon: '🏠', label: 'Home' },
-            { id: 'tokens', icon: '🪙', label: 'Tokens' },
-            { id: 'boost', icon: '⚡', label: 'Boost' },
+            ...(currentUser?.is_admin ? [
+              { id: 'admin', icon: '⚙️', label: 'Admin' }
+            ] : [
+              { id: 'tokens', icon: '🪙', label: 'Tokens' },
+              { id: 'tasks', icon: '🎯', label: 'Tasks' }
+            ]),
+            { id: 'notifications', icon: unreadCount > 0 ? '🔴' : '🔔', label: 'Alerts' },
             { id: 'profile', icon: '👤', label: 'Profile' },
             { id: 'help', icon: '❓', label: 'Help' }
           ].map(tab => (
@@ -709,29 +978,41 @@ function App() {
             <div className="bg-gradient-to-r from-blue-600 to-purple-600 rounded-2xl text-white p-6 sm:p-8">
               <div className="flex flex-col lg:flex-row justify-between items-start">
                 <div className="w-full lg:w-auto">
-                  <h1 className="text-2xl sm:text-3xl font-bold mb-2">Welcome Back! 👋</h1>
-                  <p className="text-blue-100 mb-6">Here's your portfolio performance</p>
+                  <h1 className="text-2xl sm:text-3xl font-bold mb-2">
+                    Welcome Back{currentUser?.is_admin ? ', Admin' : ''}! 👋
+                  </h1>
+                  <p className="text-blue-100 mb-6">
+                    {currentUser?.is_admin ? 'System overview and controls' : 'Here\'s your portfolio performance'}
+                  </p>
                   
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 lg:gap-8">
                     <div>
-                      <p className="text-blue-200 text-sm mb-1">Total Balance</p>
-                      <p className="text-2xl sm:text-4xl font-bold">{formatCurrency(dashboardData.stats.total_balance)}</p>
+                      <p className="text-blue-200 text-sm mb-1">
+                        {currentUser?.is_admin ? 'Admin Balance' : 'Total Balance'}
+                      </p>
+                      <p className="text-2xl sm:text-4xl font-bold">
+                        {formatCurrency(dashboardData.stats.total_balance)}
+                      </p>
                     </div>
                     <div>
-                      <p className="text-blue-200 text-sm mb-1">Active Assets</p>
-                      <p className="text-2xl sm:text-4xl font-bold">{dashboardData.stats.active_assets}</p>
+                      <p className="text-blue-200 text-sm mb-1">
+                        {currentUser?.is_admin ? 'System Status' : 'Active Assets'}
+                      </p>
+                      <p className="text-2xl sm:text-4xl font-bold">
+                        {currentUser?.is_admin ? 'ONLINE' : dashboardData.stats.active_assets}
+                      </p>
                     </div>
                   </div>
                 </div>
                 
                 <div className="mt-4 lg:mt-0 text-right">
                   <div className="bg-white bg-opacity-20 rounded-lg p-3">
-                    <span className="text-2xl">✨</span>
+                    <span className="text-2xl">{currentUser?.is_admin ? '⚙️' : '✨'}</span>
                   </div>
                 </div>
               </div>
 
-              {miningCountdown && (
+              {!currentUser?.is_admin && miningCountdown && (
                 <div className="mt-6 sm:hidden bg-white bg-opacity-20 rounded-lg p-3 text-center">
                   <p className="text-blue-100 text-sm">Next Mining</p>
                   <p className="text-lg font-bold">{miningCountdown}</p>
@@ -746,123 +1027,692 @@ function App() {
 
             {currentUser?.is_admin && (
               <div className="bg-purple-50 rounded-xl p-4 lg:p-6">
-                <h3 className="text-lg font-semibold text-gray-800 mb-4">🔧 Admin Controls</h3>
-                <div className="flex flex-col sm:flex-row gap-4">
+                <h3 className="text-lg font-semibold text-gray-800 mb-4">🔧 Quick Admin Actions</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   <button
                     onClick={triggerMining}
                     disabled={loading}
-                    className="flex items-center justify-center space-x-2 bg-purple-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-purple-700 disabled:opacity-50 transition-colors"
+                    className="flex items-center justify-center space-x-2 bg-purple-600 text-white px-4 py-3 rounded-lg font-medium hover:bg-purple-700 disabled:opacity-50 transition-colors"
                   >
                     <span>⛏️</span>
-                    <span>{loading ? 'Mining...' : 'Trigger Mining Now'}</span>
+                    <span>{loading ? 'Mining...' : 'Mine Now'}</span>
+                  </button>
+                  <button
+                    onClick={() => {setActiveTab('admin'); setAdminSubTab('users');}}
+                    className="flex items-center justify-center space-x-2 bg-blue-600 text-white px-4 py-3 rounded-lg font-medium hover:bg-blue-700 transition-colors"
+                  >
+                    <span>👥</span>
+                    <span>Manage Users</span>
+                  </button>
+                  <button
+                    onClick={() => {setActiveTab('admin'); setAdminSubTab('broadcasts');}}
+                    className="flex items-center justify-center space-x-2 bg-green-600 text-white px-4 py-3 rounded-lg font-medium hover:bg-green-700 transition-colors"
+                  >
+                    <span>📢</span>
+                    <span>Broadcast</span>
                   </button>
                   <button
                     onClick={() => fetchDashboard()}
-                    className="flex items-center justify-center space-x-2 bg-blue-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-blue-700 transition-colors"
+                    className="flex items-center justify-center space-x-2 bg-orange-600 text-white px-4 py-3 rounded-lg font-medium hover:bg-orange-700 transition-colors"
                   >
                     <span>🔄</span>
-                    <span>Refresh Data</span>
+                    <span>Refresh</span>
                   </button>
                 </div>
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-4 sm:hidden">
-              <button
-                onClick={() => setActiveTab('tokens')}
-                className="bg-white rounded-xl p-4 text-center shadow-sm border"
-              >
-                <div className="text-2xl mb-2">🪙</div>
-                <div className="text-sm font-medium text-gray-800">My Tokens</div>
-              </button>
-              <button
-                onClick={() => setActiveTab('boost')}
-                className="bg-white rounded-xl p-4 text-center shadow-sm border"
-              >
-                <div className="text-2xl mb-2">⚡</div>
-                <div className="text-sm font-medium text-gray-800">Boost</div>
-              </button>
-            </div>
-
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6">
-              <div className="bg-green-50 rounded-xl p-4 lg:p-6">
-                <div className="flex items-center justify-between mb-2 lg:mb-4">
-                  <div className="bg-green-500 rounded-lg p-2">
-                    <span className="text-white text-sm lg:text-lg">💰</span>
-                  </div>
-                  <span className="text-green-600 text-xs font-medium hidden lg:block">Auto-updating</span>
-                </div>
-                <p className="text-gray-600 text-xs lg:text-sm mb-1">Total Earnings</p>
-                <p className="text-lg lg:text-2xl font-bold text-gray-800">{formatCurrency(currentUser.total_earnings)}</p>
-              </div>
-
-              <div className="bg-blue-50 rounded-xl p-4 lg:p-6">
-                <div className="flex items-center justify-between mb-2 lg:mb-4">
-                  <div className="bg-blue-500 rounded-lg p-2">
-                    <span className="text-white text-sm lg:text-lg">🔗</span>
-                  </div>
-                  <span className="text-blue-600 text-xs font-medium">{currentUser.tokens_owned}/5</span>
-                </div>
-                <p className="text-gray-600 text-xs lg:text-sm mb-1">Active Tokens</p>
-                <p className="text-lg lg:text-2xl font-bold text-gray-800">{currentUser.tokens_owned}</p>
-              </div>
-
-              <div className="bg-purple-50 rounded-xl p-4 lg:p-6">
-                <div className="flex items-center justify-between mb-2 lg:mb-4">
-                  <div className="bg-purple-500 rounded-lg p-2">
-                    <span className="text-white text-sm lg:text-lg">👥</span>
-                  </div>
-                  <span className="text-purple-600 text-xs font-medium hidden lg:block">{formatCurrency(currentUser.referral_earnings)} earned</span>
-                </div>
-                <p className="text-gray-600 text-xs lg:text-sm mb-1">Referrals</p>
-                <p className="text-lg lg:text-2xl font-bold text-gray-800">{currentUser.referrals_count}</p>
-              </div>
-
-              <div className="bg-orange-50 rounded-xl p-4 lg:p-6">
-                <div className="flex items-center justify-between mb-2 lg:mb-4">
-                  <div className="bg-orange-500 rounded-lg p-2">
-                    <span className="text-white text-sm lg:text-lg">⚡</span>
-                  </div>
-                  <span className="text-orange-600 text-xs font-medium">Total</span>
-                </div>
-                <p className="text-gray-600 text-xs lg:text-sm mb-1">Boosts Used</p>
-                <p className="text-lg lg:text-2xl font-bold text-gray-800">{currentUser.boosts_used}</p>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-xl shadow-sm p-4 lg:p-6">
-              <h3 className="text-lg font-semibold text-gray-800 mb-4">🤝 Referral Program</h3>
-              <div className="bg-gray-50 rounded-lg p-4 mb-4">
-                <p className="text-sm text-gray-600 mb-2">Your referral code:</p>
-                <div className="flex flex-col sm:flex-row sm:items-center space-y-2 sm:space-y-0 sm:space-x-2">
-                  <code className="bg-gray-200 px-3 py-2 rounded text-sm font-mono flex-1">{currentUser.referral_code}</code>
+            {!currentUser?.is_admin && (
+              <>
+                <div className="grid grid-cols-2 gap-4 sm:hidden">
                   <button
-                    onClick={copyReferralLink}
-                    className="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700 transition-colors"
+                    onClick={() => setActiveTab('tokens')}
+                    className="bg-white rounded-xl p-4 text-center shadow-sm border"
                   >
-                    Copy Link
+                    <div className="text-2xl mb-2">🪙</div>
+                    <div className="text-sm font-medium text-gray-800">My Tokens</div>
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('tasks')}
+                    className="bg-white rounded-xl p-4 text-center shadow-sm border relative"
+                  >
+                    <div className="text-2xl mb-2">🎯</div>
+                    <div className="text-sm font-medium text-gray-800">Tasks</div>
+                    {userTasks.length > 0 && (
+                      <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                        {userTasks.length}
+                      </span>
+                    )}
                   </button>
                 </div>
-              </div>
-              <p className="text-sm text-gray-600">Earn $2 for each person who joins with your code!</p>
+
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6">
+                  <div className="bg-green-50 rounded-xl p-4 lg:p-6">
+                    <div className="flex items-center justify-between mb-2 lg:mb-4">
+                      <div className="bg-green-500 rounded-lg p-2">
+                        <span className="text-white text-sm lg:text-lg">💰</span>
+                      </div>
+                      <span className="text-green-600 text-xs font-medium hidden lg:block">Auto-updating</span>
+                    </div>
+                    <p className="text-gray-600 text-xs lg:text-sm mb-1">Total Earnings</p>
+                    <p className="text-lg lg:text-2xl font-bold text-gray-800">{formatCurrency(currentUser.total_earnings)}</p>
+                  </div>
+
+                  <div className="bg-blue-50 rounded-xl p-4 lg:p-6">
+                    <div className="flex items-center justify-between mb-2 lg:mb-4">
+                      <div className="bg-blue-500 rounded-lg p-2">
+                        <span className="text-white text-sm lg:text-lg">🔗</span>
+                      </div>
+                      <span className="text-blue-600 text-xs font-medium">{currentUser.tokens_owned}/5</span>
+                    </div>
+                    <p className="text-gray-600 text-xs lg:text-sm mb-1">Active Tokens</p>
+                    <p className="text-lg lg:text-2xl font-bold text-gray-800">{currentUser.tokens_owned}</p>
+                  </div>
+
+                  <div className="bg-purple-50 rounded-xl p-4 lg:p-6">
+                    <div className="flex items-center justify-between mb-2 lg:mb-4">
+                      <div className="bg-purple-500 rounded-lg p-2">
+                        <span className="text-white text-sm lg:text-lg">👥</span>
+                      </div>
+                      <span className="text-purple-600 text-xs font-medium hidden lg:block">{formatCurrency(currentUser.referral_earnings)} earned</span>
+                    </div>
+                    <p className="text-gray-600 text-xs lg:text-sm mb-1">Referrals</p>
+                    <p className="text-lg lg:text-2xl font-bold text-gray-800">{currentUser.referrals_count}</p>
+                  </div>
+
+                  <div className="bg-orange-50 rounded-xl p-4 lg:p-6">
+                    <div className="flex items-center justify-between mb-2 lg:mb-4">
+                      <div className="bg-orange-500 rounded-lg p-2">
+                        <span className="text-white text-sm lg:text-lg">⚡</span>
+                      </div>
+                      <span className="text-orange-600 text-xs font-medium">Total</span>
+                    </div>
+                    <p className="text-gray-600 text-xs lg:text-sm mb-1">Boosts Used</p>
+                    <p className="text-lg lg:text-2xl font-bold text-gray-800">{currentUser.boosts_used}</p>
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-xl shadow-sm p-4 lg:p-6">
+                  <h3 className="text-lg font-semibold text-gray-800 mb-4">🤝 Referral Program</h3>
+                  <div className="bg-gray-50 rounded-lg p-4 mb-4">
+                    <p className="text-sm text-gray-600 mb-2">Your referral code:</p>
+                    <div className="flex flex-col sm:flex-row sm:items-center space-y-2 sm:space-y-0 sm:space-x-2">
+                      <code className="bg-gray-200 px-3 py-2 rounded text-sm font-mono flex-1">{currentUser.referral_code}</code>
+                      <button
+                        onClick={copyReferralLink}
+                        className="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700 transition-colors"
+                      >
+                        Copy Link
+                      </button>
+                    </div>
+                  </div>
+                  <p className="text-sm text-gray-600">Earn $2 for each person who joins with your code!</p>
+                </div>
+
+                <div className="bg-white rounded-xl shadow-sm p-4 lg:p-6">
+                  <h3 className="text-lg font-semibold text-gray-800 mb-4">💸 Withdrawal Status</h3>
+                  <div className="bg-yellow-50 rounded-lg p-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between">
+                      <div className="mb-2 sm:mb-0">
+                        <p className="font-medium text-gray-800">Time until withdrawal eligible:</p>
+                        <p className="text-xl lg:text-2xl font-bold text-yellow-600">{formatTimeUntilWithdrawal(currentUser.withdrawal_eligible_at)}</p>
+                      </div>
+                      <div className="text-yellow-500 text-2xl lg:text-3xl text-right">⏰</div>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Tasks Tab */}
+        {activeTab === 'tasks' && !currentUser?.is_admin && (
+          <div className="space-y-6">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center">
+              <h2 className="text-2xl font-bold text-gray-800 mb-2 sm:mb-0">🎯 Available Tasks</h2>
+              <p className="text-gray-600">Complete tasks to earn extra rewards</p>
             </div>
 
-            <div className="bg-white rounded-xl shadow-sm p-4 lg:p-6">
-              <h3 className="text-lg font-semibold text-gray-800 mb-4">💸 Withdrawal Status</h3>
-              <div className="bg-yellow-50 rounded-lg p-4">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between">
-                  <div className="mb-2 sm:mb-0">
-                    <p className="font-medium text-gray-800">Time until withdrawal eligible:</p>
-                    <p className="text-xl lg:text-2xl font-bold text-yellow-600">{formatTimeUntilWithdrawal(currentUser.withdrawal_eligible_at)}</p>
+            {userTasks.length === 0 ? (
+              <div className="bg-white rounded-xl shadow-sm p-8 text-center">
+                <div className="text-4xl mb-4">🎯</div>
+                <h3 className="text-lg font-semibold text-gray-800 mb-2">No Tasks Available</h3>
+                <p className="text-gray-600">Check back later for new earning opportunities!</p>
+              </div>
+            ) : (
+              <div className="grid gap-6">
+                {userTasks.map((task) => (
+                  <div key={task.task_id} className="bg-white rounded-xl shadow-sm p-6">
+                    <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start mb-4">
+                      <div className="mb-4 sm:mb-0">
+                        <h3 className="text-lg font-semibold text-gray-800 mb-2">{task.title}</h3>
+                        <p className="text-gray-600 mb-2">{task.description}</p>
+                        {task.requirements && (
+                          <p className="text-sm text-blue-600">Requirements: {task.requirements}</p>
+                        )}
+                      </div>
+                      <div className="text-right">
+                        <div className="bg-green-100 text-green-800 px-3 py-1 rounded-full text-sm font-medium mb-2">
+                          +{formatCurrency(task.reward)}
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          {task.type === 'daily' ? 'Daily Task' : 
+                           task.type === 'repeatable' ? 'Repeatable' : 'One Time'}
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center">
+                      <div className="text-sm text-gray-500 mb-2 sm:mb-0">
+                        {task.expires_at && `Expires: ${new Date(task.expires_at).toLocaleDateString()}`}
+                      </div>
+                      <button
+                        onClick={() => completeTask(task.task_id)}
+                        className="bg-blue-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-blue-700 transition-colors"
+                      >
+                        Complete Task
+                      </button>
+                    </div>
                   </div>
-                  <div className="text-yellow-500 text-2xl lg:text-3xl text-right">⏰</div>
-                </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Notifications Tab */}
+        {activeTab === 'notifications' && !currentUser?.is_admin && (
+          <div className="space-y-6">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center">
+              <h2 className="text-2xl font-bold text-gray-800 mb-2 sm:mb-0">🔔 Notifications</h2>
+              <p className="text-gray-600">{unreadCount} unread messages</p>
+            </div>
+
+            {userNotifications.length === 0 ? (
+              <div className="bg-white rounded-xl shadow-sm p-8 text-center">
+                <div className="text-4xl mb-4">🔔</div>
+                <h3 className="text-lg font-semibold text-gray-800 mb-2">No Notifications</h3>
+                <p className="text-gray-600">You're all caught up!</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {userNotifications.map((notification) => (
+                  <div 
+                    key={notification.notification_id} 
+                    className={`bg-white rounded-xl shadow-sm p-4 cursor-pointer transition-colors ${
+                      !notification.read ? 'border-l-4 border-blue-500 bg-blue-50' : ''
+                    }`}
+                    onClick={() => !notification.read && markNotificationRead(notification.notification_id)}
+                  >
+                    <div className="flex justify-between items-start">
+                      <div className="flex-1">
+                        <h3 className="font-semibold text-gray-800 mb-1">{notification.title}</h3>
+                        <p className="text-gray-600 text-sm mb-2">{notification.message}</p>
+                        <p className="text-xs text-gray-500">
+                          {new Date(notification.created_at).toLocaleString()}
+                        </p>
+                      </div>
+                      <div className="ml-4">
+                        <span className={`inline-block w-3 h-3 rounded-full ${
+                          notification.type === 'success' ? 'bg-green-500' :
+                          notification.type === 'error' ? 'bg-red-500' :
+                          notification.type === 'warning' ? 'bg-yellow-500' : 'bg-blue-500'
+                        }`}></span>
+                        {!notification.read && (
+                          <div className="w-2 h-2 bg-blue-500 rounded-full mt-1 ml-0.5"></div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Admin Panel */}
+        {activeTab === 'admin' && currentUser?.is_admin && (
+          <div className="space-y-6">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center">
+              <h2 className="text-2xl font-bold text-gray-800 mb-2 sm:mb-0">⚙️ Admin Panel</h2>
+              <p className="text-gray-600">System management and user controls</p>
+            </div>
+
+            {/* Admin Sub-Navigation */}
+            <div className="bg-white rounded-xl shadow-sm">
+              <div className="flex flex-wrap border-b">
+                {[
+                  { id: 'overview', label: 'Overview', icon: '📊' },
+                  { id: 'users', label: 'User Management', icon: '👥' },
+                  { id: 'tasks', label: 'Task Manager', icon: '🎯' },
+                  { id: 'broadcasts', label: 'Broadcasts', icon: '📢' },
+                  { id: 'actions', label: 'Quick Actions', icon: '⚡' }
+                ].map(tab => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setAdminSubTab(tab.id)}
+                    className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+                      adminSubTab === tab.id
+                        ? 'border-blue-500 text-blue-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    {tab.icon} {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="p-6">
+                {adminSubTab === 'overview' && (
+                  <div className="space-y-6">
+                    {adminStats && (
+                      <>
+                        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+                          <div className="bg-blue-50 rounded-lg p-4 text-center">
+                            <div className="text-2xl font-bold text-blue-600">{adminStats.total_users}</div>
+                            <div className="text-sm text-gray-600">Total Users</div>
+                          </div>
+                          <div className="bg-green-50 rounded-lg p-4 text-center">
+                            <div className="text-2xl font-bold text-green-600">{adminStats.total_tokens}</div>
+                            <div className="text-sm text-gray-600">Total Tokens</div>
+                          </div>
+                          <div className="bg-purple-50 rounded-lg p-4 text-center">
+                            <div className="text-2xl font-bold text-purple-600">{adminStats.total_transactions}</div>
+                            <div className="text-sm text-gray-600">Transactions</div>
+                          </div>
+                          <div className="bg-orange-50 rounded-lg p-4 text-center">
+                            <div className="text-2xl font-bold text-orange-600">{adminStats.total_tasks}</div>
+                            <div className="text-sm text-gray-600">Tasks Created</div>
+                          </div>
+                          <div className="bg-pink-50 rounded-lg p-4 text-center">
+                            <div className="text-2xl font-bold text-pink-600">{adminStats.total_broadcasts}</div>
+                            <div className="text-sm text-gray-600">Broadcasts</div>
+                          </div>
+                        </div>
+
+                        <div className="bg-gray-50 rounded-lg p-4">
+                          <h3 className="font-semibold text-gray-800 mb-2">Platform Earnings</h3>
+                          <div className="text-3xl font-bold text-green-600">
+                            {formatCurrency(adminStats.total_platform_earnings)}
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {adminSubTab === 'users' && (
+                  <div className="space-y-6">
+                    <div className="flex justify-between items-center">
+                      <h3 className="text-lg font-semibold text-gray-800">User Management</h3>
+                      <button
+                        onClick={fetchAdminUsers}
+                        className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                      >
+                        Refresh Users
+                      </button>
+                    </div>
+
+                    <div className="grid gap-4">
+                      {adminUsers.map((user) => (
+                        <div key={user.user_id} className="bg-gray-50 rounded-lg p-4">
+                          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start">
+                            <div className="mb-4 sm:mb-0">
+                              <h4 className="font-semibold text-gray-800">{user.user_id}</h4>
+                              <p className="text-sm text-gray-600">{user.email}</p>
+                              <p className="text-sm text-gray-500">
+                                Joined: {new Date(user.created_at).toLocaleDateString()}
+                              </p>
+                              <div className="flex space-x-4 mt-2 text-sm">
+                                <span>Balance: {formatCurrency(user.total_earnings)}</span>
+                                <span>Tokens: {user.tokens_owned}</span>
+                                <span>Referrals: {user.referrals_count}</span>
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => fetchUserDetails(user.user_id)}
+                              className="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700 transition-colors"
+                            >
+                              View Details
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {selectedUser && (
+                      <div className="bg-white border-2 border-blue-200 rounded-lg p-6">
+                        <h3 className="text-lg font-semibold text-gray-800 mb-4">
+                          User Details: {selectedUser.user.user_id}
+                        </h3>
+                        
+                        <div className="grid lg:grid-cols-2 gap-6">
+                          <div>
+                            <h4 className="font-medium text-gray-800 mb-2">Basic Info</h4>
+                            <div className="space-y-2 text-sm">
+                              <p><strong>Email:</strong> {selectedUser.user.email}</p>
+                              <p><strong>Balance:</strong> {formatCurrency(selectedUser.user.total_earnings)}</p>
+                              <p><strong>Tokens:</strong> {selectedUser.user.tokens_owned}</p>
+                              <p><strong>Referrals:</strong> {selectedUser.user.referrals_count}</p>
+                            </div>
+                          </div>
+                          
+                          <div>
+                            <h4 className="font-medium text-gray-800 mb-2">User Tokens</h4>
+                            <div className="space-y-2">
+                              {selectedUser.tokens.map((token) => (
+                                <div key={token.token_id} className="text-sm bg-gray-100 p-2 rounded">
+                                  <p><strong>{token.name}</strong> - Level {token.boost_level}</p>
+                                  <p>Earned: {formatCurrency(token.total_earnings)}</p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => setSelectedUser(null)}
+                          className="mt-4 bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 transition-colors"
+                        >
+                          Close Details
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {adminSubTab === 'tasks' && (
+                  <div className="space-y-6">
+                    <div className="flex justify-between items-center">
+                      <h3 className="text-lg font-semibold text-gray-800">Task Manager</h3>
+                      <button
+                        onClick={fetchAdminTasks}
+                        className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                      >
+                        Refresh Tasks
+                      </button>
+                    </div>
+
+                    <div className="bg-gray-50 rounded-lg p-6">
+                      <h4 className="font-medium text-gray-800 mb-4">Create New Task</h4>
+                      <form onSubmit={handleCreateTask} className="space-y-4">
+                        <div className="grid lg:grid-cols-2 gap-4">
+                          <input
+                            type="text"
+                            placeholder="Task Title"
+                            value={createTaskForm.title}
+                            onChange={(e) => setCreateTaskForm({...createTaskForm, title: e.target.value})}
+                            className="w-full p-3 border border-gray-300 rounded-lg"
+                            required
+                          />
+                          <input
+                            type="number"
+                            step="0.01"
+                            placeholder="Reward Amount ($)"
+                            value={createTaskForm.reward}
+                            onChange={(e) => setCreateTaskForm({...createTaskForm, reward: e.target.value})}
+                            className="w-full p-3 border border-gray-300 rounded-lg"
+                            required
+                          />
+                        </div>
+                        <textarea
+                          placeholder="Task Description"
+                          value={createTaskForm.description}
+                          onChange={(e) => setCreateTaskForm({...createTaskForm, description: e.target.value})}
+                          className="w-full p-3 border border-gray-300 rounded-lg h-24"
+                          required
+                        />
+                        <div className="grid lg:grid-cols-3 gap-4">
+                          <select
+                            value={createTaskForm.type}
+                            onChange={(e) => setCreateTaskForm({...createTaskForm, type: e.target.value})}
+                            className="w-full p-3 border border-gray-300 rounded-lg"
+                          >
+                            <option value="one_time">One Time</option>
+                            <option value="daily">Daily</option>
+                            <option value="repeatable">Repeatable</option>
+                          </select>
+                          <input
+                            type="text"
+                            placeholder="Requirements (optional)"
+                            value={createTaskForm.requirements}
+                            onChange={(e) => setCreateTaskForm({...createTaskForm, requirements: e.target.value})}
+                            className="w-full p-3 border border-gray-300 rounded-lg"
+                          />
+                          <input
+                            type="datetime-local"
+                            placeholder="Expires At (optional)"
+                            value={createTaskForm.expires_at}
+                            onChange={(e) => setCreateTaskForm({...createTaskForm, expires_at: e.target.value})}
+                            className="w-full p-3 border border-gray-300 rounded-lg"
+                          />
+                        </div>
+                        <button
+                          type="submit"
+                          disabled={loading}
+                          className="bg-green-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-green-700 disabled:opacity-50 transition-colors"
+                        >
+                          {loading ? 'Creating...' : 'Create Task'}
+                        </button>
+                      </form>
+                    </div>
+
+                    <div className="grid gap-4">
+                      {adminTasks.map((task) => (
+                        <div key={task.task_id} className="bg-gray-50 rounded-lg p-4">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <h4 className="font-semibold text-gray-800">{task.title}</h4>
+                              <p className="text-gray-600 text-sm">{task.description}</p>
+                              <div className="flex space-x-4 mt-2 text-sm text-gray-500">
+                                <span>Reward: {formatCurrency(task.reward)}</span>
+                                <span>Type: {task.type}</span>
+                                <span>Completed: {task.completion_count} times</span>
+                              </div>
+                            </div>
+                            <span className={`px-2 py-1 rounded text-xs ${
+                              task.active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                            }`}>
+                              {task.active ? 'Active' : 'Inactive'}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {adminSubTab === 'broadcasts' && (
+                  <div className="space-y-6">
+                    <div className="flex justify-between items-center">
+                      <h3 className="text-lg font-semibold text-gray-800">Broadcast Center</h3>
+                      <button
+                        onClick={fetchAdminBroadcasts}
+                        className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                      >
+                        Refresh Broadcasts
+                      </button>
+                    </div>
+
+                    <div className="bg-gray-50 rounded-lg p-6">
+                      <h4 className="font-medium text-gray-800 mb-4">Send Broadcast Message</h4>
+                      <form onSubmit={handleBroadcast} className="space-y-4">
+                        <div className="grid lg:grid-cols-2 gap-4">
+                          <input
+                            type="text"
+                            placeholder="Broadcast Title"
+                            value={broadcastForm.title}
+                            onChange={(e) => setBroadcastForm({...broadcastForm, title: e.target.value})}
+                            className="w-full p-3 border border-gray-300 rounded-lg"
+                            required
+                          />
+                          <div className="grid grid-cols-2 gap-2">
+                            <select
+                              value={broadcastForm.type}
+                              onChange={(e) => setBroadcastForm({...broadcastForm, type: e.target.value})}
+                              className="w-full p-3 border border-gray-300 rounded-lg"
+                            >
+                              <option value="info">Info</option>
+                              <option value="success">Success</option>
+                              <option value="warning">Warning</option>
+                              <option value="error">Error</option>
+                            </select>
+                            <select
+                              value={broadcastForm.priority}
+                              onChange={(e) => setBroadcastForm({...broadcastForm, priority: e.target.value})}
+                              className="w-full p-3 border border-gray-300 rounded-lg"
+                            >
+                              <option value="low">Low</option>
+                              <option value="medium">Medium</option>
+                              <option value="high">High</option>
+                            </select>
+                          </div>
+                        </div>
+                        <textarea
+                          placeholder="Broadcast Message"
+                          value={broadcastForm.message}
+                          onChange={(e) => setBroadcastForm({...broadcastForm, message: e.target.value})}
+                          className="w-full p-3 border border-gray-300 rounded-lg h-24"
+                          required
+                        />
+                        <button
+                          type="submit"
+                          disabled={loading}
+                          className="bg-blue-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                        >
+                          {loading ? 'Sending...' : 'Send Broadcast'}
+                        </button>
+                      </form>
+                    </div>
+
+                    <div className="grid gap-4">
+                      {adminBroadcasts.map((broadcast) => (
+                        <div key={broadcast.broadcast_id} className="bg-gray-50 rounded-lg p-4">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <h4 className="font-semibold text-gray-800">{broadcast.title}</h4>
+                              <p className="text-gray-600 text-sm">{broadcast.message}</p>
+                              <div className="flex space-x-4 mt-2 text-sm text-gray-500">
+                                <span>Recipients: {broadcast.recipient_count}</span>
+                                <span>Type: {broadcast.type}</span>
+                                <span>Priority: {broadcast.priority}</span>
+                                <span>Sent: {new Date(broadcast.created_at).toLocaleString()}</span>
+                              </div>
+                            </div>
+                            <span className={`px-2 py-1 rounded text-xs ${
+                              broadcast.type === 'success' ? 'bg-green-100 text-green-800' :
+                              broadcast.type === 'error' ? 'bg-red-100 text-red-800' :
+                              broadcast.type === 'warning' ? 'bg-yellow-100 text-yellow-800' :
+                              'bg-blue-100 text-blue-800'
+                            }`}>
+                              {broadcast.type}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {adminSubTab === 'actions' && (
+                  <div className="space-y-6">
+                    <h3 className="text-lg font-semibold text-gray-800">Quick Actions</h3>
+                    
+                    <div className="grid lg:grid-cols-2 gap-6">
+                      <div className="bg-gray-50 rounded-lg p-6">
+                        <h4 className="font-medium text-gray-800 mb-4">Send Balance to User</h4>
+                        <form onSubmit={handleSendBalance} className="space-y-4">
+                          <input
+                            type="text"
+                            placeholder="User ID"
+                            value={sendBalanceForm.user_id}
+                            onChange={(e) => setSendBalanceForm({...sendBalanceForm, user_id: e.target.value})}
+                            className="w-full p-3 border border-gray-300 rounded-lg"
+                            required
+                          />
+                          <input
+                            type="number"
+                            step="0.01"
+                            placeholder="Amount ($)"
+                            value={sendBalanceForm.amount}
+                            onChange={(e) => setSendBalanceForm({...sendBalanceForm, amount: e.target.value})}
+                            className="w-full p-3 border border-gray-300 rounded-lg"
+                            required
+                          />
+                          <input
+                            type="text"
+                            placeholder="Reason"
+                            value={sendBalanceForm.reason}
+                            onChange={(e) => setSendBalanceForm({...sendBalanceForm, reason: e.target.value})}
+                            className="w-full p-3 border border-gray-300 rounded-lg"
+                            required
+                          />
+                          <button
+                            type="submit"
+                            disabled={loading}
+                            className="w-full bg-green-600 text-white py-3 rounded-lg font-medium hover:bg-green-700 disabled:opacity-50 transition-colors"
+                          >
+                            {loading ? 'Sending...' : 'Send Balance'}
+                          </button>
+                        </form>
+                      </div>
+
+                      <div className="bg-gray-50 rounded-lg p-6">
+                        <h4 className="font-medium text-gray-800 mb-4">Give Token Boost</h4>
+                        <form onSubmit={handleGiveBoost} className="space-y-4">
+                          <input
+                            type="text"
+                            placeholder="User ID"
+                            value={giveBoostForm.user_id}
+                            onChange={(e) => setGiveBoostForm({...giveBoostForm, user_id: e.target.value})}
+                            className="w-full p-3 border border-gray-300 rounded-lg"
+                            required
+                          />
+                          <input
+                            type="text"
+                            placeholder="Token ID"
+                            value={giveBoostForm.token_id}
+                            onChange={(e) => setGiveBoostForm({...giveBoostForm, token_id: e.target.value})}
+                            className="w-full p-3 border border-gray-300 rounded-lg"
+                            required
+                          />
+                          <input
+                            type="number"
+                            min="1"
+                            placeholder="Boost Levels"
+                            value={giveBoostForm.boost_levels}
+                            onChange={(e) => setGiveBoostForm({...giveBoostForm, boost_levels: e.target.value})}
+                            className="w-full p-3 border border-gray-300 rounded-lg"
+                            required
+                          />
+                          <input
+                            type="text"
+                            placeholder="Reason"
+                            value={giveBoostForm.reason}
+                            onChange={(e) => setGiveBoostForm({...giveBoostForm, reason: e.target.value})}
+                            className="w-full p-3 border border-gray-300 rounded-lg"
+                            required
+                          />
+                          <button
+                            type="submit"
+                            disabled={loading}
+                            className="w-full bg-purple-600 text-white py-3 rounded-lg font-medium hover:bg-purple-700 disabled:opacity-50 transition-colors"
+                          >
+                            {loading ? 'Applying...' : 'Give Boost'}
+                          </button>
+                        </form>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
         )}
 
-        {(activeTab === 'tokens' || activeTab === 'boost') && dashboardData && (
+        {/* Existing tabs (tokens, boost, etc.) remain the same as original */}
+        {(activeTab === 'tokens' || activeTab === 'boost') && dashboardData && !currentUser?.is_admin && (
           <div className="space-y-6">
             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center">
               <h2 className="text-2xl font-bold text-gray-800 mb-2 sm:mb-0">
@@ -962,6 +1812,7 @@ function App() {
           </div>
         )}
 
+        {/* Referrals Tab */}
         {activeTab === 'referrals' && (
           <div className="space-y-6">
             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center">
@@ -1034,30 +1885,12 @@ function App() {
                     </button>
                   </div>
                 </div>
-                
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  <button className="flex items-center justify-center space-x-2 bg-blue-600 text-white px-4 py-2 rounded text-sm">
-                    <span>📘</span>
-                    <span>Facebook</span>
-                  </button>
-                  <button className="flex items-center justify-center space-x-2 bg-blue-400 text-white px-4 py-2 rounded text-sm">
-                    <span>🐦</span>
-                    <span>Twitter</span>
-                  </button>
-                  <button className="flex items-center justify-center space-x-2 bg-green-600 text-white px-4 py-2 rounded text-sm">
-                    <span>💬</span>
-                    <span>WhatsApp</span>
-                  </button>
-                  <button className="flex items-center justify-center space-x-2 bg-blue-700 text-white px-4 py-2 rounded text-sm">
-                    <span>💼</span>
-                    <span>LinkedIn</span>
-                  </button>
-                </div>
               </div>
             </div>
           </div>
         )}
 
+        {/* Profile Tab */}
         {activeTab === 'profile' && (
           <div className="space-y-6">
             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center">
@@ -1070,7 +1903,6 @@ function App() {
                 {[
                   { id: 'account', label: 'Account', icon: '👤' },
                   { id: 'security', label: 'Security', icon: '🔐' },
-                  { id: 'transactions', label: 'Transactions', icon: '💳' },
                   { id: 'settings', label: 'Settings', icon: '⚙️' }
                 ].map(tab => (
                   <button
@@ -1131,6 +1963,19 @@ function App() {
                       </div>
                     </div>
 
+                    {currentUser?.is_admin && (
+                      <div className="bg-purple-50 rounded-lg p-4">
+                        <h4 className="font-medium text-purple-800 mb-2">🔧 Admin Privileges</h4>
+                        <div className="text-sm text-purple-700 space-y-1">
+                          <p>✓ Unlimited balance</p>
+                          <p>✓ User management access</p>
+                          <p>✓ System controls</p>
+                          <p>✓ Broadcasting capabilities</p>
+                          <p>✓ Hidden from leaderboards</p>
+                        </div>
+                      </div>
+                    )}
+
                     <div className="bg-gray-50 rounded-lg p-4">
                       <h4 className="font-medium text-gray-800 mb-2">Account Stats</h4>
                       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 text-center">
@@ -1159,77 +2004,12 @@ function App() {
                   <div className="space-y-6">
                     <h3 className="text-lg font-semibold text-gray-800">Security Settings</h3>
                     
-                    <form onSubmit={handlePasswordChange} className="space-y-4">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Current Password</label>
-                        <input
-                          type="password"
-                          value={profileForm.currentPassword}
-                          onChange={(e) => setProfileForm({...profileForm, currentPassword: e.target.value})}
-                          className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">New Password</label>
-                        <input
-                          type="password"
-                          value={profileForm.newPassword}
-                          onChange={(e) => setProfileForm({...profileForm, newPassword: e.target.value})}
-                          className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Confirm New Password</label>
-                        <input
-                          type="password"
-                          value={profileForm.confirmPassword}
-                          onChange={(e) => setProfileForm({...profileForm, confirmPassword: e.target.value})}
-                          className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        />
-                      </div>
-                      <button
-                        type="submit"
-                        disabled={loading}
-                        className="bg-blue-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
-                      >
-                        {loading ? 'Updating...' : 'Update Password'}
-                      </button>
-                    </form>
-
                     <div className="bg-yellow-50 rounded-lg p-4">
                       <h4 className="font-medium text-gray-800 mb-2">🔐 Account Security</h4>
                       <p className="text-sm text-gray-600">
                         Your account is secured with industry-standard encryption. 
-                        We recommend using a strong, unique password and enabling two-factor authentication when available.
+                        Password change functionality coming soon!
                       </p>
-                    </div>
-                  </div>
-                )}
-
-                {profileSubTab === 'transactions' && (
-                  <div className="space-y-6">
-                    <h3 className="text-lg font-semibold text-gray-800">Transaction History</h3>
-                    
-                    <div className="bg-gray-50 rounded-lg p-4 text-center">
-                      <div className="text-4xl mb-2">💳</div>
-                      <p className="text-gray-600">Transaction history feature coming soon!</p>
-                      <p className="text-sm text-gray-500 mt-2">
-                        You'll be able to view all your payments, mining earnings, and referral bonuses here.
-                      </p>
-                    </div>
-
-                    <div className="bg-blue-50 rounded-lg p-4">
-                      <h4 className="font-medium text-gray-800 mb-2">📊 Quick Stats</h4>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="text-center">
-                          <div className="text-xl font-bold text-green-600">{formatCurrency(currentUser?.total_earnings || 0)}</div>
-                          <div className="text-sm text-gray-600">Total Earned</div>
-                        </div>
-                        <div className="text-center">
-                          <div className="text-xl font-bold text-purple-600">{formatCurrency(currentUser?.referral_earnings || 0)}</div>
-                          <div className="text-sm text-gray-600">From Referrals</div>
-                        </div>
-                      </div>
                     </div>
                   </div>
                 )}
@@ -1239,16 +2019,6 @@ function App() {
                     <h3 className="text-lg font-semibold text-gray-800">App Settings</h3>
                     
                     <div className="space-y-4">
-                      <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                        <div>
-                          <h4 className="font-medium text-gray-800">🌙 Dark Mode</h4>
-                          <p className="text-sm text-gray-600">Switch to dark theme</p>
-                        </div>
-                        <button className="bg-gray-300 rounded-full w-12 h-6 relative">
-                          <div className="bg-white w-5 h-5 rounded-full absolute top-0.5 left-0.5 transition-transform"></div>
-                        </button>
-                      </div>
-
                       <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
                         <div>
                           <h4 className="font-medium text-gray-800">🔔 Notifications</h4>
@@ -1270,16 +2040,6 @@ function App() {
                         </select>
                       </div>
                     </div>
-
-                    <div className="bg-red-50 rounded-lg p-4">
-                      <h4 className="font-medium text-red-800 mb-2">⚠️ Danger Zone</h4>
-                      <p className="text-sm text-red-600 mb-4">
-                        Once you delete your account, there is no going back. Please be certain.
-                      </p>
-                      <button className="bg-red-600 text-white px-4 py-2 rounded text-sm hover:bg-red-700 transition-colors">
-                        Delete Account
-                      </button>
-                    </div>
                   </div>
                 )}
               </div>
@@ -1287,119 +2047,7 @@ function App() {
           </div>
         )}
 
-        {activeTab === 'help' && (
-          <div className="space-y-6">
-            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center">
-              <h2 className="text-2xl font-bold text-gray-800 mb-2 sm:mb-0">❓ Help Center</h2>
-              <p className="text-gray-600">Everything you need to know about ProfitPilot</p>
-            </div>
-
-            <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl p-4 lg:p-6">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between">
-                <div className="mb-4 sm:mb-0">
-                  <h3 className="text-lg font-semibold text-gray-800">🚀 New to ProfitPilot?</h3>
-                  <p className="text-gray-600">Take our quick tour to learn the basics</p>
-                </div>
-                <button
-                  onClick={() => setShowOnboarding(true)}
-                  className="bg-gradient-to-r from-blue-600 to-purple-600 text-white px-6 py-3 rounded-lg font-medium hover:opacity-90 transition-opacity"
-                >
-                  Take Tour Again
-                </button>
-              </div>
-            </div>
-
-            <div className="grid gap-6">
-              <div className="bg-white rounded-xl shadow-sm p-4 lg:p-6">
-                <h3 className="text-lg font-semibold text-gray-800 mb-4">⛏️ Mining System</h3>
-                <div className="space-y-4">
-                  <div className="border-l-4 border-blue-500 pl-4">
-                    <h4 className="font-medium text-gray-800">How does mining work?</h4>
-                    <p className="text-sm text-gray-600">Your tokens automatically generate earnings every 2 hours. No manual work required - it's completely passive!</p>
-                  </div>
-                  <div className="border-l-4 border-green-500 pl-4">
-                    <h4 className="font-medium text-gray-800">How much can I earn?</h4>
-                    <p className="text-sm text-gray-600">Base earning is $0.70 per token every 2 hours. With 5 boosted tokens, you could earn over $500 per month!</p>
-                  </div>
-                  <div className="border-l-4 border-purple-500 pl-4">
-                    <h4 className="font-medium text-gray-800">When does mining happen?</h4>
-                    <p className="text-sm text-gray-600">Mining occurs automatically every 2 hours, 24/7. Check the countdown timer to see when your next mining cycle begins.</p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="bg-white rounded-xl shadow-sm p-4 lg:p-6">
-                <h3 className="text-lg font-semibold text-gray-800 mb-4">🚀 Boosting Tokens</h3>
-                <div className="space-y-4">
-                  <div className="border-l-4 border-orange-500 pl-4">
-                    <h4 className="font-medium text-gray-800">What is boosting?</h4>
-                    <p className="text-sm text-gray-600">Boosting doubles your token's earning power. Each boost level multiplies earnings: Level 1 = $1.40, Level 2 = $2.80, etc.</p>
-                  </div>
-                  <div className="border-l-4 border-red-500 pl-4">
-                    <h4 className="font-medium text-gray-800">How much does boosting cost?</h4>
-                    <p className="text-sm text-gray-600">Boost cost doubles each level: Level 1 = $3, Level 2 = $6, Level 3 = $12, Level 4 = $24, etc.</p>
-                  </div>
-                  <div className="border-l-4 border-yellow-500 pl-4">
-                    <h4 className="font-medium text-gray-800">Is boosting worth it?</h4>
-                    <p className="text-sm text-gray-600">Yes! Higher boost levels pay for themselves quickly and generate significantly more long-term earnings.</p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="bg-white rounded-xl shadow-sm p-4 lg:p-6">
-                <h3 className="text-lg font-semibold text-gray-800 mb-4">💰 Payments & Withdrawals</h3>
-                <div className="space-y-4">
-                  <div className="border-l-4 border-blue-500 pl-4">
-                    <h4 className="font-medium text-gray-800">When can I withdraw?</h4>
-                    <p className="text-sm text-gray-600">Withdrawals are available after 180 days (6 months) from registration. This ensures platform stability.</p>
-                  </div>
-                  <div className="border-l-4 border-green-500 pl-4">
-                    <h4 className="font-medium text-gray-800">How do I pay for tokens/boosts?</h4>
-                    <p className="text-sm text-gray-600">We use Paystack for secure payments. You can pay with cards, bank transfers, and other local payment methods.</p>
-                  </div>
-                  <div className="border-l-4 border-purple-500 pl-4">
-                    <h4 className="font-medium text-gray-800">Are my payments secure?</h4>
-                    <p className="text-sm text-gray-600">Yes! All payments are processed through Paystack's secure, PCI-compliant infrastructure.</p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="bg-white rounded-xl shadow-sm p-4 lg:p-6">
-                <h3 className="text-lg font-semibold text-gray-800 mb-4">🤝 Referral Program</h3>
-                <div className="space-y-4">
-                  <div className="border-l-4 border-pink-500 pl-4">
-                    <h4 className="font-medium text-gray-800">How much do I earn per referral?</h4>
-                    <p className="text-sm text-gray-600">You earn $2 for every person who registers using your referral code. They also get $2 as a welcome bonus!</p>
-                  </div>
-                  <div className="border-l-4 border-teal-500 pl-4">
-                    <h4 className="font-medium text-gray-800">How do I share my referral code?</h4>
-                    <p className="text-sm text-gray-600">Copy your referral link from the dashboard or referrals page and share it on social media, messaging apps, or via email.</p>
-                  </div>
-                  <div className="border-l-4 border-indigo-500 pl-4">
-                    <h4 className="font-medium text-gray-800">Is there a referral limit?</h4>
-                    <p className="text-sm text-gray-600">No! You can refer unlimited people and earn $2 for each successful referral.</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-gradient-to-r from-gray-50 to-blue-50 rounded-xl p-4 lg:p-6">
-              <h3 className="text-lg font-semibold text-gray-800 mb-4">📞 Need More Help?</h3>
-              <p className="text-gray-600 mb-4">Can't find what you're looking for? Get in touch with our support team.</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <button className="flex items-center justify-center space-x-2 bg-blue-600 text-white px-4 py-3 rounded-lg hover:bg-blue-700 transition-colors">
-                  <span>📧</span>
-                  <span>Email Support</span>
-                </button>
-                <button className="flex items-center justify-center space-x-2 bg-green-600 text-white px-4 py-3 rounded-lg hover:bg-green-700 transition-colors">
-                  <span>💬</span>
-                  <span>Live Chat</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
+        {/* Leaderboard Tab */}
         {activeTab === 'board' && (
           <div className="space-y-6">
             <h2 className="text-2xl font-bold text-gray-800">🏆 Leaderboard</h2>
@@ -1469,35 +2117,58 @@ function App() {
           </div>
         )}
 
-        {activeTab === 'admin' && currentUser?.is_admin && (
+        {/* Help Tab */}
+        {activeTab === 'help' && (
           <div className="space-y-6">
-            <h2 className="text-2xl font-bold text-gray-800">⚙️ Admin Panel</h2>
-            
-            {adminStats ? (
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6">
-                <div className="bg-white rounded-xl shadow-sm p-4 lg:p-6">
-                  <h3 className="text-lg font-semibold text-gray-800 mb-2">Total Users</h3>
-                  <p className="text-2xl lg:text-3xl font-bold text-blue-600">{adminStats.total_users}</p>
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center">
+              <h2 className="text-2xl font-bold text-gray-800 mb-2 sm:mb-0">❓ Help Center</h2>
+              <p className="text-gray-600">Everything you need to know about ProfitPilot</p>
+            </div>
+
+            <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl p-4 lg:p-6">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between">
+                <div className="mb-4 sm:mb-0">
+                  <h3 className="text-lg font-semibold text-gray-800">🚀 New to ProfitPilot?</h3>
+                  <p className="text-gray-600">Take our quick tour to learn the basics</p>
                 </div>
-                <div className="bg-white rounded-xl shadow-sm p-4 lg:p-6">
-                  <h3 className="text-lg font-semibold text-gray-800 mb-2">Total Tokens</h3>
-                  <p className="text-2xl lg:text-3xl font-bold text-green-600">{adminStats.total_tokens}</p>
-                </div>
-                <div className="bg-white rounded-xl shadow-sm p-4 lg:p-6">
-                  <h3 className="text-lg font-semibold text-gray-800 mb-2">Transactions</h3>
-                  <p className="text-2xl lg:text-3xl font-bold text-orange-600">{adminStats.total_transactions}</p>
-                </div>
-                <div className="bg-white rounded-xl shadow-sm p-4 lg:p-6">
-                  <h3 className="text-lg font-semibold text-gray-800 mb-2">Platform Earnings</h3>
-                  <p className="text-xl lg:text-3xl font-bold text-purple-600">{formatCurrency(adminStats.total_platform_earnings)}</p>
+                <button
+                  onClick={() => setShowOnboarding(true)}
+                  className="bg-gradient-to-r from-blue-600 to-purple-600 text-white px-6 py-3 rounded-lg font-medium hover:opacity-90 transition-opacity"
+                >
+                  Take Tour Again
+                </button>
+              </div>
+            </div>
+
+            <div className="grid gap-6">
+              <div className="bg-white rounded-xl shadow-sm p-4 lg:p-6">
+                <h3 className="text-lg font-semibold text-gray-800 mb-4">⛏️ Mining System</h3>
+                <div className="space-y-4">
+                  <div className="border-l-4 border-blue-500 pl-4">
+                    <h4 className="font-medium text-gray-800">How does mining work?</h4>
+                    <p className="text-sm text-gray-600">Your tokens automatically generate earnings every 2 hours. No manual work required - it's completely passive!</p>
+                  </div>
+                  <div className="border-l-4 border-green-500 pl-4">
+                    <h4 className="font-medium text-gray-800">How much can I earn?</h4>
+                    <p className="text-sm text-gray-600">Base earning is $0.70 per token every 2 hours. With 5 boosted tokens, you could earn over $500 per month!</p>
+                  </div>
                 </div>
               </div>
-            ) : (
-              <div className="text-center py-12">
-                <div className="text-4xl mb-4">⚙️</div>
-                <p className="text-gray-500">Loading admin stats...</p>
+
+              <div className="bg-white rounded-xl shadow-sm p-4 lg:p-6">
+                <h3 className="text-lg font-semibold text-gray-800 mb-4">🎯 Tasks & Notifications</h3>
+                <div className="space-y-4">
+                  <div className="border-l-4 border-purple-500 pl-4">
+                    <h4 className="font-medium text-gray-800">What are tasks?</h4>
+                    <p className="text-sm text-gray-600">Complete simple tasks created by admin to earn extra rewards. Check the Tasks tab regularly for new opportunities!</p>
+                  </div>
+                  <div className="border-l-4 border-orange-500 pl-4">
+                    <h4 className="font-medium text-gray-800">How do notifications work?</h4>
+                    <p className="text-sm text-gray-600">Get notified about mining completions, task rewards, admin announcements, and more. Check the bell icon for updates!</p>
+                  </div>
+                </div>
               </div>
-            )}
+            </div>
           </div>
         )}
       </main>
