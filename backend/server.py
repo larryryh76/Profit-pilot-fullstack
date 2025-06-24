@@ -17,7 +17,7 @@ import logging
 from contextlib import asynccontextmanager
 
 # Environment variables
-MONGO_URL = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+MONGO_URL = os.getenv("MONGO_URL", "mongodb://localhost:27017")
 DB_NAME = os.getenv("DB_NAME", "profitpilot")
 JWT_SECRET = os.getenv("JWT_SECRET", "SuperSecretKey123")
 PAYSTACK_SECRET_KEY = os.getenv("PAYSTACK_SECRET_KEY", "sk_live_b41107e30aa0682bdfbf68a60dbc3b49da6da6fa")
@@ -76,7 +76,7 @@ class UserLogin(BaseModel):
 
 class ProfileUpdate(BaseModel):
     preferred_currency: Optional[str] = None
-    theme: Optional[str] = Field(None, regex="^(light|dark)$")
+    theme: Optional[str] = Field(None, pattern="^(light|dark)$")
     notifications_enabled: Optional[bool] = None
 
 class PaymentVerification(BaseModel):
@@ -93,17 +93,17 @@ class AdminCreateTask(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
     description: str = Field(..., min_length=1, max_length=1000)
     reward: float = Field(..., gt=0)
-    type: str = Field(..., regex="^(daily|one_time|repeatable)$")
+    type: str = Field(..., pattern="^(daily|one_time|repeatable)$")
     requirements: Optional[str] = None
     expires_at: Optional[datetime] = None
-    verification_type: str = Field(default="manual", regex="^(manual|automatic|external)$")
+    verification_type: str = Field(default="manual", pattern="^(manual|automatic|external)$")
     external_url: Optional[str] = None
 
 class AdminBroadcast(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
     message: str = Field(..., min_length=1, max_length=1000)
-    type: str = Field(..., regex="^(info|warning|success|error)$")
-    priority: str = Field(..., regex="^(low|medium|high)$")
+    type: str = Field(..., pattern="^(info|warning|success|error)$")
+    priority: str = Field(..., pattern="^(low|medium|high)$")
 
 class TaskComplete(BaseModel):
     task_id: str
