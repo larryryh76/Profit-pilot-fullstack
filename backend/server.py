@@ -17,7 +17,7 @@ import logging
 from contextlib import asynccontextmanager
 
 # Environment variables
-MONGO_URL = os.getenv("MONGO_URL", "mongodb://localhost:27017")
+MONGO_URL = os.getenv("MONGO_URI", "mongodb://localhost:27017")
 DB_NAME = os.getenv("DB_NAME", "profitpilot")
 JWT_SECRET = os.getenv("JWT_SECRET", "SuperSecretKey123")
 PAYSTACK_SECRET_KEY = os.getenv("PAYSTACK_SECRET_KEY", "sk_live_b41107e30aa0682bdfbf68a60dbc3b49da6da6fa")
