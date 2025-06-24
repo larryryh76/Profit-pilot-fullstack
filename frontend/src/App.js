@@ -746,20 +746,9 @@ function App() {
             <div className="mt-6 space-y-3 text-sm text-gray-600 dark:text-gray-400">
               <div className="flex items-center justify-center space-x-2">
                 <span>⛏️</span>
-                <span>Automated mining every 2 hours</span>
+                <span> Your Automated mining platform</span>
               </div>
-              <div className="flex items-center justify-center space-x-2">
-                <span>💱</span>
-                <span>Multi-currency support</span>
-              </div>
-              <div className="flex items-center justify-center space-x-2">
-                <span>🌙</span>
-                <span>Dark/Light theme options</span>
-              </div>
-              <div className="flex items-center justify-center space-x-2">
-                <span>🚀</span>
-                <span>Professional admin workspace</span>
-              </div>
+           
             </div>
           </div>
 
