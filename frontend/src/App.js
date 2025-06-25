@@ -307,17 +307,19 @@ function App() {
       setLoading(false);
     }
   };
-
+  
   const fetchSupportedCurrencies = async () => {
     try {
       const response = await axios.get(`${BACKEND_URL}/api/currencies`);
       setSupportedCurrencies(response.data.currencies);
       setCurrencyRates(response.data.rates);
-    } catch (error)      console.error('Error fetching currencies:', error);
+    } catch (error) { // This block is corrected
+      console.error('Error fetching currencies:', error);
       // Optionally, set a default rates object here if needed
       setCurrencyRates({"USD": 1}); // Basic fallback
     }
   };
+
 
   const fetchDashboard = async (token = null) => {
     try {
