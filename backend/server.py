@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException, Depends, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
-from pymongo import MongoClient
+from pymongo import MongoClient, ReturnDocument
 from pydantic import BaseModel, EmailStr, Field, validator
 from passlib.context import CryptContext
 from datetime import datetime, timedelta
@@ -109,6 +109,13 @@ class TaskComplete(BaseModel):
     task_id: str
     verification_data: Optional[Dict[str, Any]] = None
 
+class AdminGrantToken(BaseModel):
+    user_id: str
+    token_name: Optional[str] = Field("Admin Granted Token", min_length=1, max_length=100)
+
+class AdminBoostToken(BaseModel):
+    token_id: str
+
 # ============================================================================
 # PROFESSIONAL UTILITY FUNCTIONS
 # ============================================================================
@@ -154,7 +161,8 @@ def generate_user_id() -> str:
 # ============================================================================
 
 async def get_currency_rates():
-    """Get real-time currency conversion rates"""
+    # This is a docstring within triple quotes
+    # Get real-time currency conversion rates
     try:
         response = requests.get("https://api.exchangerate-api.com/v4/latest/USD", timeout=10)
         data = response.json()
@@ -174,7 +182,8 @@ async def get_currency_rates():
         return {"USD": 1, "NGN": 1500, "GBP": 0.75, "EUR": 0.85, "CAD": 1.25, "AUD": 1.35, "JPY": 110, "INR": 75, "ZAR": 15}
 
 async def detect_user_country(request: Request):
-    """Detect user's country from IP address"""
+    # This is a docstring
+    # Detect user's country from IP address
     try:
         client_ip = request.client.host
         if client_ip in ["127.0.0.1", "localhost"]:
@@ -187,7 +196,8 @@ async def detect_user_country(request: Request):
         return "NG"
 
 def get_currency_for_country(country_code: str) -> str:
-    """Map country code to currency"""
+    # This is a docstring
+    # Map country code to currency
     currency_map = {
         "NG": "NGN", "US": "USD", "GB": "GBP", "DE": "EUR", "FR": "EUR",
         "CA": "CAD", "AU": "AUD", "JP": "JPY", "IN": "INR", "ZA": "ZAR"
@@ -195,7 +205,8 @@ def get_currency_for_country(country_code: str) -> str:
     return currency_map.get(country_code, "USD")
 
 async def convert_currency(amount: float, from_currency: str, to_currency: str) -> float:
-    """Convert amount from one currency to another"""
+    # This is a docstring
+    # Convert amount from one currency to another
     if from_currency == to_currency:
         return amount
     
@@ -209,7 +220,8 @@ async def convert_currency(amount: float, from_currency: str, to_currency: str) 
 # ============================================================================
 
 def update_user_session(user_id: str):
-    """Update user's last active time"""
+    # This is a docstring
+    # Update user's last active time
     user_sessions_collection.update_one(
         {"user_id": user_id},
         {
@@ -220,7 +232,8 @@ def update_user_session(user_id: str):
     )
 
 def get_online_users_count():
-    """Get count of users online in last 5 minutes"""
+    # This is a docstring
+    # Get count of users online in last 5 minutes
     five_minutes_ago = datetime.utcnow() - timedelta(minutes=5)
     return user_sessions_collection.count_documents({
         "last_active": {"$gte": five_minutes_ago}
@@ -231,7 +244,8 @@ def get_online_users_count():
 # ============================================================================
 
 def create_notification(user_id: str, title: str, message: str, type: str = "info"):
-    """Create a notification for a user"""
+    # This is a docstring
+    # Create a notification for a user
     notification_doc = {
         "notification_id": str(uuid.uuid4()),
         "user_id": user_id,
@@ -249,7 +263,8 @@ def create_notification(user_id: str, title: str, message: str, type: str = "inf
 # ============================================================================
 
 async def process_mining():
-    """Automated mining process - no admin intervention"""
+    # This is a docstring
+    # Automated mining process - no admin intervention
     try:
         logger.info("🚀 Starting automated mining process...")
         tokens = list(tokens_collection.find({"active": True}))
@@ -318,7 +333,8 @@ async def process_mining():
         })
 
 async def mining_scheduler():
-    """Automated mining scheduler - runs every 2 hours"""
+    # This is a docstring
+    # Automated mining scheduler - runs every 2 hours
     logger.info("⏰ Automated mining scheduler started - runs every 2 hours")
     
     while True:
@@ -575,7 +591,8 @@ async def update_profile(profile_data: ProfileUpdate, current_user: dict = Depen
 
 @app.get("/api/currencies")
 async def get_supported_currencies():
-    """Get list of supported currencies with current rates"""
+    # This is a docstring
+    # Get list of supported currencies with current rates
     rates = await get_currency_rates()
     supported_currencies = {
         "USD": {"name": "US Dollar", "symbol": "$"},
@@ -769,7 +786,8 @@ async def verify_payment(payment_data: PaymentVerification, current_user: dict =
 
 @app.get("/api/notifications")
 async def get_user_notifications(current_user: dict = Depends(get_current_user)):
-    """Get user notifications"""
+    # This is a docstring
+    # Get user notifications
     notifications = list(notifications_collection.find(
         {"user_id": current_user["user_id"]}
     ).sort("created_at", -1).limit(50))
@@ -789,7 +807,8 @@ async def get_user_notifications(current_user: dict = Depends(get_current_user))
 
 @app.post("/api/notifications/{notification_id}/read")
 async def mark_notification_read(notification_id: str, current_user: dict = Depends(get_current_user)):
-    """Mark notification as read"""
+    # This is a docstring
+    # Mark notification as read
     result = notifications_collection.update_one(
         {"notification_id": notification_id, "user_id": current_user["user_id"]},
         {"$set": {"read": True}}
@@ -802,7 +821,8 @@ async def mark_notification_read(notification_id: str, current_user: dict = Depe
 
 @app.get("/api/tasks")
 async def get_available_tasks(current_user: dict = Depends(get_current_user)):
-    """Get available tasks for user"""
+    # This is a docstring
+    # Get available tasks for user
     if current_user.get("is_admin"):
         return {"tasks": []}
     
@@ -822,7 +842,8 @@ async def get_available_tasks(current_user: dict = Depends(get_current_user)):
 
 @app.post("/api/tasks/complete")
 async def complete_task(task_complete: TaskComplete, current_user: dict = Depends(get_current_user)):
-    """Complete a task and earn reward"""
+    # This is a docstring
+    # Complete a task and earn reward
     if current_user.get("is_admin"):
         raise HTTPException(status_code=400, detail="Admin cannot complete tasks")
     
@@ -907,14 +928,16 @@ async def get_leaderboard():
 # ============================================================================
 
 def require_admin(current_user: dict = Depends(get_current_user)):
-    """Require admin privileges"""
+    # This is a docstring
+    # Require admin privileges
     if not current_user.get("is_admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
     return current_user
 
 @app.get("/api/admin/workspace/dashboard")
 async def get_admin_dashboard(current_user: dict = Depends(require_admin)):
-    """Professional admin dashboard with comprehensive metrics"""
+    # This is a docstring
+    # Professional admin dashboard with comprehensive metrics
     
     # Calculate total revenue from payments
     total_revenue = 0
@@ -1001,7 +1024,8 @@ async def get_admin_dashboard(current_user: dict = Depends(require_admin)):
 
 @app.get("/api/admin/workspace/users")
 async def get_all_users(current_user: dict = Depends(require_admin)):
-    """Get all users with comprehensive data"""
+    # This is a docstring
+    # Get all users with comprehensive data
     users = list(users_collection.find(
         {"is_admin": {"$ne": True}}, 
         {"password": 0}
@@ -1029,7 +1053,8 @@ async def get_all_users(current_user: dict = Depends(require_admin)):
 
 @app.get("/api/admin/workspace/users/{user_id}")
 async def get_user_details(user_id: str, current_user: dict = Depends(require_admin)):
-    """Get comprehensive user details"""
+    # This is a docstring
+    # Get comprehensive user details
     user = users_collection.find_one({"user_id": user_id}, {"password": 0})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -1065,7 +1090,8 @@ async def get_user_details(user_id: str, current_user: dict = Depends(require_ad
 
 @app.post("/api/admin/workspace/send-balance")
 async def admin_send_balance(balance_data: AdminSendBalance, current_user: dict = Depends(require_admin)):
-    """Send balance to a user"""
+    # This is a docstring
+    # Send balance to a user
     user = users_collection.find_one({"user_id": balance_data.user_id})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -1100,7 +1126,8 @@ async def admin_send_balance(balance_data: AdminSendBalance, current_user: dict 
 
 @app.post("/api/admin/workspace/create-task")
 async def admin_create_task(task_data: AdminCreateTask, current_user: dict = Depends(require_admin)):
-    """Create dynamic task with advanced verification options"""
+    # This is a docstring
+    # Create dynamic task with advanced verification options
     task_id = str(uuid.uuid4())
     task_doc = {
         "task_id": task_id,
@@ -1122,9 +1149,9 @@ async def admin_create_task(task_data: AdminCreateTask, current_user: dict = Dep
     tasks_collection.insert_one(task_doc)
     
     all_users = list(users_collection.find({"is_admin": {"$ne": True}}, {"user_id": 1}))
-    for user in all_users:
+    for user_item in all_users: # changed variable name from user to user_item
         create_notification(
-            user["user_id"],
+            user_item["user_id"], # changed variable name
             f"New Task Available! 🎯",
             f"{task_data.title} - Earn ${task_data.reward:.2f}",
             "info"
@@ -1136,7 +1163,8 @@ async def admin_create_task(task_data: AdminCreateTask, current_user: dict = Dep
 
 @app.get("/api/admin/workspace/tasks")
 async def get_admin_tasks(current_user: dict = Depends(require_admin)):
-    """Get all tasks with completion statistics"""
+    # This is a docstring
+    # Get all tasks with completion statistics
     tasks = list(tasks_collection.find({}).sort("created_at", -1))
     for task in tasks:
         task['_id'] = str(task['_id'])
@@ -1147,7 +1175,8 @@ async def get_admin_tasks(current_user: dict = Depends(require_admin)):
 
 @app.put("/api/admin/workspace/tasks/{task_id}/toggle")
 async def toggle_task_status(task_id: str, current_user: dict = Depends(require_admin)):
-    """Toggle task active status"""
+    # This is a docstring
+    # Toggle task active status
     task = tasks_collection.find_one({"task_id": task_id})
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -1162,7 +1191,8 @@ async def toggle_task_status(task_id: str, current_user: dict = Depends(require_
 
 @app.post("/api/admin/workspace/broadcast")
 async def admin_broadcast(broadcast_data: AdminBroadcast, current_user: dict = Depends(require_admin)):
-    """Send broadcast message to all users"""
+    # This is a docstring
+    # Send broadcast message to all users
     broadcast_id = str(uuid.uuid4())
     
     broadcast_doc = {
@@ -1178,9 +1208,9 @@ async def admin_broadcast(broadcast_data: AdminBroadcast, current_user: dict = D
     
     all_users = list(users_collection.find({"is_admin": {"$ne": True}}, {"user_id": 1}))
     
-    for user in all_users:
+    for user_item in all_users: # changed variable name
         create_notification(
-            user["user_id"],
+            user_item["user_id"], # changed variable name
             broadcast_data.title,
             broadcast_data.message,
             broadcast_data.type
@@ -1195,16 +1225,134 @@ async def admin_broadcast(broadcast_data: AdminBroadcast, current_user: dict = D
 
 @app.get("/api/admin/workspace/broadcasts")
 async def get_admin_broadcasts(current_user: dict = Depends(require_admin)):
-    """Get all admin broadcasts"""
+    # This is a docstring
+    # Get all admin broadcasts
     broadcasts = list(broadcasts_collection.find({}).sort("created_at", -1).limit(50))
     for broadcast in broadcasts:
         broadcast['_id'] = str(broadcast['_id'])
     
     return {"broadcasts": broadcasts}
 
+@app.post("/api/admin/workspace/users/grant-token", status_code=status.HTTP_201_CREATED)
+async def admin_grant_token_to_user(grant_data: AdminGrantToken, current_admin: dict = Depends(require_admin)):
+    user_to_grant = users_collection.find_one({"user_id": grant_data.user_id})
+    if not user_to_grant:
+        raise HTTPException(status_code=404, detail="Target user not found")
+    if user_to_grant.get("is_admin"):
+        raise HTTPException(status_code=400, detail="Cannot grant tokens to another admin account")
+
+    current_tokens_count = tokens_collection.count_documents({"owner_id": grant_data.user_id})
+    if current_tokens_count >= 5: # Assuming 5 is the max token limit
+        raise HTTPException(status_code=400, detail=f"User already has the maximum of 5 tokens. Cannot grant another.")
+
+    token_id = str(uuid.uuid4())
+    token_name = grant_data.token_name if grant_data.token_name and grant_data.token_name.strip() else f"ProfitToken #{current_tokens_count + 1}"
+    
+    token_doc = {
+        "token_id": token_id,
+        "owner_id": grant_data.user_id,
+        "name": token_name,
+        "boost_level": 0,
+        "total_earnings": 0.0,
+        "created_at": datetime.utcnow(),
+        "last_mining": datetime.utcnow(),
+        "active": True,
+        "mining_history": [],
+        "boost_history": [],
+        "granted_by_admin": current_admin["user_id"],
+        "grant_reason": "Admin grant"
+    }
+    tokens_collection.insert_one(token_doc)
+    
+    users_collection.update_one(
+        {"user_id": grant_data.user_id},
+        {"$inc": {"tokens_owned": 1}}
+    )
+
+    transactions_collection.insert_one({
+        "user_id": grant_data.user_id,
+        "reference": f"admin_grant_token_{token_id}",
+        "action": "admin_token_grant",
+        "amount_usd": 0,
+        "status": "success",
+        "admin_id": current_admin["user_id"],
+        "token_id_granted": token_id,
+        "timestamp": datetime.utcnow()
+    })
+
+    create_notification(
+        grant_data.user_id,
+        "🎁 New Token Granted!",
+        f"An administrator has granted you a new token: '{token_name}'.",
+        "success"
+    )
+    
+    logger.info(f"Admin {current_admin['user_id']} granted token '{token_name}' to user {grant_data.user_id}")
+    return {"message": "Token granted successfully", "token_details": token_doc}
+
+
+@app.post("/api/admin/workspace/tokens/boost-token", status_code=status.HTTP_200_OK)
+async def admin_boost_user_token(boost_data: AdminBoostToken, current_admin: dict = Depends(require_admin)):
+    token_to_boost = tokens_collection.find_one({"token_id": boost_data.token_id})
+    if not token_to_boost:
+        raise HTTPException(status_code=404, detail="Token not found")
+
+    token_owner = users_collection.find_one({"user_id": token_to_boost["owner_id"]})
+    if not token_owner: # Should ideally not happen if token integrity is maintained
+        raise HTTPException(status_code=404, detail="Token owner not found")
+    if token_owner.get("is_admin"):
+        raise HTTPException(status_code=400, detail="Cannot boost tokens owned by admin accounts.")
+
+    # Example: Define a max boost level if desired
+    # MAX_BOOST_LEVEL = 10
+    # if token_to_boost.get("boost_level", 0) >= MAX_BOOST_LEVEL:
+    #     raise HTTPException(status_code=400, detail=f"Token is already at maximum boost level ({MAX_BOOST_LEVEL}).")
+
+    updated_token_doc = tokens_collection.find_one_and_update(
+        {"token_id": boost_data.token_id},
+        {
+            "$inc": {"boost_level": 1},
+            "$push": {"boost_history": {
+                "timestamp": datetime.utcnow(),
+                "cost_usd": 0, # No cost to user for admin boost
+                "new_level": token_to_boost.get("boost_level", 0) + 1,
+                "boosted_by_admin": current_admin["user_id"],
+                "boost_reason": "Admin boost"
+            }}
+        },
+        return_document=ReturnDocument.AFTER
+    )
+    
+    if not updated_token_doc: # Should not happen if find_one succeeded, but good practice
+        raise HTTPException(status_code=404, detail="Token found but failed to update.")
+
+    transactions_collection.insert_one({
+        "user_id": token_to_boost["owner_id"],
+        "reference": f"admin_boost_token_{boost_data.token_id}",
+        "action": "admin_token_boost",
+        "amount_usd": 0,
+        "status": "success",
+        "admin_id": current_admin["user_id"],
+        "boosted_token_id": boost_data.token_id,
+        "new_boost_level": updated_token_doc.get("boost_level"),
+        "timestamp": datetime.utcnow()
+    })
+
+    create_notification(
+        token_to_boost["owner_id"],
+        "🚀 Token Boosted!",
+        f"An administrator has boosted your token: '{token_to_boost['name']}'. It's now at Level {updated_token_doc.get('boost_level')}!",
+        "success"
+    )
+
+    logger.info(f"Admin {current_admin['user_id']} boosted token {boost_data.token_id} (owned by {token_to_boost['owner_id']}) to level {updated_token_doc.get('boost_level')}")
+    return {"message": "Token boosted successfully", "token_details": updated_token_doc}
+
+
 @app.get("/api/admin/workspace/system-status")
 async def get_system_status(current_user: dict = Depends(require_admin)):
-    """Get comprehensive system status"""
+    # This is a docstring
+    # Get comprehensive system status
     
     recent_mining = list(mining_logs_collection.find({}).sort("timestamp", -1).limit(10))
     for log in recent_mining:
