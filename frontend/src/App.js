@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import './App.css';
 
@@ -30,7 +30,12 @@ function App() {
   const [lastEarnings, setLastEarnings] = useState(0);
   const [userTasks, setUserTasks] = useState([]);
   const [supportedCurrencies, setSupportedCurrencies] = useState({});
+  const [currencyRates, setCurrencyRates] = useState(null);
   const [theme, setTheme] = useState('light');
+  const [mobileMenuScrollPos, setMobileMenuScrollPos] = useState(0);
+  const mobileNavRef = useRef(null);
+  const [isDashboardRefreshing, setIsDashboardRefreshing] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   // Auth form state
   const [authForm, setAuthForm] = useState({
@@ -71,6 +76,17 @@ function App() {
     priority: 'medium'
   });
 
+  const [adminGrantTokenForm, setAdminGrantTokenForm] = useState({
+    user_id: '',
+    token_name: ''
+  });
+
+  const [adminBoostTokenForm, setAdminBoostTokenForm] = useState({
+    token_id: ''
+  });
+  const [selectedUserForBoost, setSelectedUserForBoost] = useState('');
+  const [selectedUserForBoostTokens, setSelectedUserForBoostTokens] = useState([]);
+
   // Theme effect
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark');
@@ -105,7 +121,7 @@ function App() {
   useEffect(() => {
     if (!showAuth && currentUser) {
       const interval = setInterval(() => {
-        fetchDashboard();
+        fetchDashboard(null, { isBackgroundRefresh: true });
         if (!currentUser.is_admin) {
           fetchUserNotifications();
         }
@@ -136,7 +152,7 @@ function App() {
         
         if (diff <= 0) {
           setMiningCountdown('Mining now! 🎉');
-          setTimeout(() => fetchDashboard(), 5000);
+          setTimeout(() => fetchDashboard(null, { isBackgroundRefresh: true }), 5000);
         } else {
           const hours = Math.floor(diff / (1000 * 60 * 60));
           const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
@@ -149,12 +165,157 @@ function App() {
     }
   }, [dashboardData?.next_mining]);
 
+  useEffect(() => {
+    if (showMobileMenu && mobileNavRef.current) {
+      mobileNavRef.current.scrollTop = mobileMenuScrollPos;
+    }
+  }, [showMobileMenu]); // mobileMenuScrollPos removed from deps to prevent potential loops if navRef isn't immediately available.
+
+  const fetchDashboard = async (token = null, options = { isBackgroundRefresh: false }) => {
+    const { isBackgroundRefresh } = options;
+    try {
+      if (!isBackgroundRefresh) {
+        setLoading(true);
+      } else {
+        setIsDashboardRefreshing(true);
+      }
+      const authToken = token || localStorage.getItem('profitpilot_token');
+      const response = await axios.get(`${BACKEND_URL}/api/dashboard`, {
+        headers: { Authorization: `Bearer ${authToken}` }
+      });
+      setDashboardData(response.data);
+      setCurrentUser(response.data.user);
+      setTheme(response.data.user.theme || 'light');
+      setProfileForm({
+        preferred_currency: response.data.user.preferred_currency || 'USD',
+        theme: response.data.user.theme || 'light',
+        notifications_enabled: response.data.user.notifications_enabled !== false
+      });
+      setShowAuth(false);
+      
+      if (response.data.user.tokens_owned === 1 && !localStorage.getItem('onboarding_completed')) {
+        setShowOnboarding(true);
+      }
+
+      // Fetch notifications for users
+      if (!response.data.user.is_admin) {
+        fetchUserNotifications(authToken);
+        fetchUserTasks(authToken);
+      }
+    } catch (error) {
+      console.error('Dashboard fetch error:', error);
+      if (error.response?.status === 401) {
+        localStorage.removeItem('profitpilot_token');
+        setShowAuth(true);
+      } else {
+        showNotification('Failed to load dashboard data', 'error');
+      }
+    } finally {
+      if (!isBackgroundRefresh) {
+        setLoading(false);
+      } else {
+        setIsDashboardRefreshing(false);
+      }
+    }
+  };
+
+  const fetchTokensForUserBoostSelection = async (userId) => {
+    if (!userId) {
+      setSelectedUserForBoostTokens([]);
+      setAdminBoostTokenForm(prev => ({ ...prev, token_id: '' }));
+      return;
+    }
+    setSelectedUserForBoost(userId);
+    try {
+      const token = localStorage.getItem('profitpilot_token');
+      const response = await axios.get(`${BACKEND_URL}/api/admin/workspace/users/${userId}`, {
+       headers: { Authorization: `Bearer ${token}` }
+      });
+      setSelectedUserForBoostTokens(response.data.tokens || []);
+      setAdminBoostTokenForm(prev => ({ ...prev, token_id: '' })); 
+    } catch (error) {
+      showNotification('Failed to fetch user tokens for boosting.', 'error');
+      setSelectedUserForBoostTokens([]);
+    }
+  };
+
+  const handleAdminGrantToken = async (e) => {
+    e.preventDefault();
+    if (!adminGrantTokenForm.user_id) {
+      showNotification('User ID is required.', 'error');
+      return;
+    }
+    try {
+      setLoading(true);
+      const token = localStorage.getItem('profitpilot_token');
+      const payload = {
+        user_id: adminGrantTokenForm.user_id,
+        token_name: adminGrantTokenForm.token_name.trim() || "Admin Granted Token"
+      };
+      const response = await axios.post(`${BACKEND_URL}/api/admin/workspace/users/grant-token`, payload, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      showNotification(response.data.message, 'success');
+      setAdminGrantTokenForm({ user_id: '', token_name: '' });
+      if (selectedUser && selectedUser.user.user_id === payload.user_id) {
+        fetchUserDetails(payload.user_id);
+      }
+      fetchAdminUsers(); 
+    } catch (error) {
+      showNotification(error.response?.data?.detail || 'Failed to grant token', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAdminBoostToken = async (e) => {
+    e.preventDefault();
+    if (!adminBoostTokenForm.token_id) {
+      showNotification('Token ID is required.', 'error');
+      return;
+    }
+    try {
+      setLoading(true);
+      const token = localStorage.getItem('profitpilot_token');
+      const payload = { token_id: adminBoostTokenForm.token_id };
+      const response = await axios.post(`${BACKEND_URL}/api/admin/workspace/tokens/boost-token`, payload, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      showNotification(response.data.message, 'success');
+      setAdminBoostTokenForm({ token_id: '' });
+      setSelectedUserForBoostTokens([]); 
+      setSelectedUserForBoost('');
+      
+      // Refresh relevant data - e.g. if the boosted token's owner is currently selectedUser
+      if (selectedUser) {
+        const boostedTokenOwnerId = selectedUserForBoostTokens.find(t => t.token_id === payload.token_id)?.owner_id || selectedUser.user.user_id; 
+        // This logic to find owner might be tricky if selectedUserForBoostTokens is cleared too early
+        // Simpler: if a user is selected whose token might have been boosted, refresh their details.
+        // The current `selectedUser` might not be the owner of the token if admin typed token_id directly.
+        // Best to refresh adminUsers or the specific user if known.
+         fetchAdminUsers(); // Refresh the main user list which might show updated boost levels indirectly
+         if(selectedUser && selectedUser.user.user_id === selectedUserForBoost) { // If current selected user is the one whose token list was shown
+            fetchUserDetails(selectedUser.user.user_id);
+         }
+      } else {
+        fetchAdminUsers(); // General refresh
+      }
+
+    } catch (error) {
+      showNotification(error.response?.data?.detail || 'Failed to boost token', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const fetchSupportedCurrencies = async () => {
     try {
       const response = await axios.get(`${BACKEND_URL}/api/currencies`);
       setSupportedCurrencies(response.data.currencies);
-    } catch (error) {
-      console.error('Error fetching currencies:', error);
+      setCurrencyRates(response.data.rates);
+    } catch (error)      console.error('Error fetching currencies:', error);
+      // Optionally, set a default rates object here if needed
+      setCurrencyRates({"USD": 1}); // Basic fallback
     }
   };
 
@@ -213,7 +374,7 @@ function App() {
   const fetchUserTasks = async (token = null) => {
     try {
       const authToken = token || localStorage.getItem('profitpilot_token');
-      const response = await axios.get(`${BACKEND_URL}/api/tasks`, {
+      const response = await axios.get(`${BACKEND_URL}/api/tasks?_cb=${new Date().getTime()}`, {
         headers: { Authorization: `Bearer ${authToken}` }
       });
       setUserTasks(response.data.tasks);
@@ -293,11 +454,13 @@ function App() {
         headers: { Authorization: `Bearer ${token}` }
       });
       
-      setTheme(profileForm.theme);
+      setTheme(profileForm.theme); // Ensure React theme state matches the theme just saved.
       showNotification('Profile updated successfully!', 'success');
       fetchDashboard(); // Refresh to get updated data
     } catch (error) {
       showNotification(error.response?.data?.detail || 'Failed to update profile', 'error');
+      // Consider reverting optimistic UI theme change if API call failed
+      // For now, if API fails, the optimistic theme set by button click will persist until next page load/dashboard fetch.
     } finally {
       setLoading(false);
     }
@@ -503,15 +666,40 @@ function App() {
     }
   }, [activeTab, adminSubTab]);
 
-  const formatCurrency = (amount, currency = null) => {
-    const userCurrency = currency || currentUser?.preferred_currency || 'USD';
-    const currencyInfo = supportedCurrencies[userCurrency] || { symbol: '$' };
+  const formatCurrency = (amountInUSD, explicitTargetCurrency = null) => {
+    const targetCurrency = explicitTargetCurrency || currentUser?.preferred_currency || 'USD';
     
-    if (amount === Infinity) return `∞ ${userCurrency}`;
+    let displayAmount = amountInUSD;
+
+    // Check if essential data is loaded
+    if (!currencyRates || !Object.keys(supportedCurrencies).length) {
+      // Fallback to USD display if rates/currencies info isn't loaded yet
+      const usdInfo = supportedCurrencies['USD'] || { name: "US Dollar", symbol: "$" }; // Basic USD info
+      return `${usdInfo.symbol}${new Intl.NumberFormat('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(amountInUSD || 0)} (USD)`;
+    }
+
+    if (targetCurrency !== 'USD' && currencyRates[targetCurrency]) {
+      displayAmount = amountInUSD * currencyRates[targetCurrency];
+    } else if (targetCurrency !== 'USD' && !currencyRates[targetCurrency] && amountInUSD !== 0) {
+      // Rates for target currency not found, display original amount in USD to avoid misrepresentation
+      const usdInfo = supportedCurrencies['USD'] || { symbol: '$' };
+      return `${usdInfo.symbol}${new Intl.NumberFormat('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      }).format(amountInUSD || 0)} (USD)`;
+    }
+
+    const currencyInfo = supportedCurrencies[targetCurrency] || { symbol: '$' }; // Default to USD symbol
+
+    if (amountInUSD === Infinity) return `∞ ${targetCurrency}`; // Base amount is infinity
+
     return `${currencyInfo.symbol}${new Intl.NumberFormat('en-US', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2
-    }).format(amount || 0)}`;
+    }).format(displayAmount || 0)}`;
   };
 
   const formatTimeUntilWithdrawal = (eligibleDate) => {
@@ -588,7 +776,16 @@ function App() {
 
     return (
       <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-        <div className="bg-white dark:bg-gray-800 rounded-2xl max-w-md w-full p-8 text-center">
+        <div className="bg-white dark:bg-gray-800 rounded-2xl max-w-md w-full p-8 text-center relative"> {/* Added relative positioning context */}
+          <button
+            onClick={completeOnboarding}
+            className="absolute top-0 right-0 mt-4 mr-4 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 transition-colors"
+            aria-label="Close onboarding"
+          >
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path>
+            </svg>
+          </button>
           <div className="text-6xl mb-4">{currentStep.icon}</div>
           <h2 className="text-2xl font-bold text-gray-800 dark:text-white mb-4">{currentStep.title}</h2>
           <p className="text-gray-600 dark:text-gray-300 mb-8">{currentStep.content}</p>
@@ -659,8 +856,13 @@ function App() {
               </div>
               <span className="ml-3 text-xl font-bold text-gray-800 dark:text-white">ProfitPilot</span>
             </div>
-            <button 
-              onClick={() => setShowMobileMenu(false)} 
+            <button
+              onClick={() => {
+                if (mobileNavRef.current) {
+                  setMobileMenuScrollPos(mobileNavRef.current.scrollTop);
+                }
+                setShowMobileMenu(false);
+              }}
               className="text-gray-500 dark:text-gray-400 text-xl"
             >
               ✕
@@ -674,7 +876,7 @@ function App() {
           </div>
         </div>
         
-        <nav className="p-4 space-y-2 max-h-96 overflow-y-auto">
+        <nav ref={mobileNavRef} className="p-4 space-y-2 max-h-96 overflow-y-auto">
           {[
             { id: 'home', icon: '🏠', label: 'Dashboard', desc: 'Overview & stats' },
             ...(currentUser?.is_admin ? [
@@ -693,6 +895,9 @@ function App() {
             <button
               key={item.id}
               onClick={() => {
+                if (mobileNavRef.current) {
+                  setMobileMenuScrollPos(mobileNavRef.current.scrollTop);
+                }
                 setActiveTab(item.id);
                 setShowMobileMenu(false);
               }}
@@ -778,15 +983,29 @@ function App() {
                 required
               />
             </div>
-            <div>
-              <input
-                type="password"
-                placeholder="Password"
-                value={authForm.password}
-                onChange={(e) => setAuthForm({...authForm, password: e.target.value})}
-                className="w-full p-4 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-base"
-                required
-              />
+            <div> {/* Password input container */}
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  placeholder="Password"
+                  value={authForm.password}
+                  onChange={(e) => setAuthForm({...authForm, password: e.target.value})}
+                  className="w-full p-4 pr-12 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-base"
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(prev => !prev)}
+                  className="absolute inset-y-0 right-0 px-3 flex items-center text-sm leading-5 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 focus:outline-none"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? (
+                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
+                  ) : (
+                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.542-7 1.274-4.057 5.064-7 9.542-7 .847 0 1.668.124 2.458.352M7.5 7.5l9 9M3.75 3.75l16.5 16.5"></path></svg>
+                  )}
+                </button>
+              </div>
             </div>
             {authMode === 'register' && (
               <div>
@@ -1128,6 +1347,7 @@ function App() {
                   { id: 'users', label: 'User Management', icon: '👥' },
                   { id: 'tasks', label: 'Task Manager', icon: '🎯' },
                   { id: 'broadcasts', label: 'Broadcasting', icon: '📢' },
+                  { id: 'token_tools', label: 'Token Tools', icon: '🔧' },
                   { id: 'system', label: 'System Status', icon: '⚙️' }
                 ].map(tab => (
                   <button
@@ -1574,6 +1794,108 @@ function App() {
                   </div>
                 )}
 
+                {adminSubTab === 'token_tools' && (
+                  <div className="space-y-8">
+                    <div>
+                      <h3 className="text-xl font-semibold text-gray-800 dark:text-white mb-4">🎁 Grant Token to User</h3>
+                      <form onSubmit={handleAdminGrantToken} className="p-6 bg-gray-50 dark:bg-gray-700 rounded-lg space-y-4">
+                        <div>
+                          <label htmlFor="grantTokenUserId" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Select User</label>
+                          <select
+                            id="grantTokenUserId"
+                            value={adminGrantTokenForm.user_id}
+                            onChange={(e) => setAdminGrantTokenForm({...adminGrantTokenForm, user_id: e.target.value})}
+                            className="w-full p-3 border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-white rounded-lg"
+                            required
+                          >
+                            <option value="">-- Select User --</option>
+                            {adminUsers.filter(u => !u.is_admin).map(user => (
+                              <option key={user.user_id} value={user.user_id}>
+                                {user.email} ({user.user_id}) - Tokens: {user.tokens_owned || user.tokens_count || 0}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label htmlFor="grantTokenName" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Token Name (Optional)</label>
+                          <input
+                            type="text"
+                            id="grantTokenName"
+                            placeholder="e.g., Special Bonus Token"
+                            value={adminGrantTokenForm.token_name}
+                            onChange={(e) => setAdminGrantTokenForm({...adminGrantTokenForm, token_name: e.target.value})}
+                            className="w-full p-3 border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-white rounded-lg"
+                          />
+                        </div>
+                        <button
+                          type="submit"
+                          disabled={loading}
+                          className="bg-green-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-green-700 disabled:opacity-50 transition-colors"
+                        >
+                          {loading && adminGrantTokenForm.user_id ? 'Granting...' : 'Grant Token'}
+                        </button>
+                      </form>
+                    </div>
+
+                    <div>
+                      <h3 className="text-xl font-semibold text-gray-800 dark:text-white mb-4">🚀 Boost User Token</h3>
+                      <form onSubmit={handleAdminBoostToken} className="p-6 bg-gray-50 dark:bg-gray-700 rounded-lg space-y-4">
+                        <div>
+                          <label htmlFor="boostTokenUserId" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Select User Whose Token to Boost</label>
+                          <select
+                            id="boostTokenUserId"
+                            value={selectedUserForBoost}
+                            onChange={(e) => {
+                              setSelectedUserForBoost(e.target.value);
+                              fetchTokensForUserBoostSelection(e.target.value);
+                            }}
+                            className="w-full p-3 border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-white rounded-lg"
+                            required
+                          >
+                            <option value="">-- Select User --</option>
+                            {adminUsers.filter(u => !u.is_admin && (u.tokens_owned || u.tokens_count || 0) > 0).map(user => (
+                              <option key={user.user_id} value={user.user_id}>
+                                {user.email} ({user.user_id})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {selectedUserForBoostTokens.length > 0 && (
+                          <div>
+                            <label htmlFor="boostTokenTokenId" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Select Token to Boost</label>
+                            <select
+                              id="boostTokenTokenId"
+                              value={adminBoostTokenForm.token_id}
+                              onChange={(e) => setAdminBoostTokenForm({...adminBoostTokenForm, token_id: e.target.value})}
+                              className="w-full p-3 border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-white rounded-lg"
+                              required
+                            >
+                              <option value="">-- Select Token --</option>
+                              {selectedUserForBoostTokens.map(token => (
+                                <option key={token.token_id} value={token.token_id}>
+                                  {token.name} (ID: {token.token_id.substring(0,8)}...) - Level: {token.boost_level}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+                         {selectedUserForBoost && selectedUserForBoostTokens.length === 0 && (
+                            <p className="text-sm text-gray-500 dark:text-gray-400">This user has no tokens to boost, or tokens are still loading.</p>
+                        )}
+
+                        <button
+                          type="submit"
+                          disabled={loading || !adminBoostTokenForm.token_id}
+                          className="bg-blue-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                        >
+                          {loading && adminBoostTokenForm.token_id ? 'Boosting...' : 'Boost Token by 1 Level'}
+                        </button>
+                      </form>
+                    </div>
+                  </div>
+                )}
+
                 {adminSubTab === 'system' && (
                   <div className="space-y-6">
                     <h3 className="text-lg font-semibold text-gray-800 dark:text-white">⚙️ System Status</h3>
@@ -1806,7 +2128,7 @@ function App() {
                     <div>
                       <p className="text-sm text-gray-500 dark:text-gray-400">Total Earned</p>
                       <p className="text-lg font-semibold text-green-600 dark:text-green-400">
-                        {formatCurrency(token.total_earnings_converted || token.total_earnings)}
+                        {formatCurrency(token.total_earnings)} {/* Always pass base USD amount */}
                       </p>
                     </div>
                     <div>
