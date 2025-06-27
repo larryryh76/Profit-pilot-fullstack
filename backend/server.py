@@ -112,7 +112,7 @@ class UserLogin(BaseModel):
 
 class ProfileUpdate(BaseModel):
     preferred_currency: Optional[str] = Field(None, max_length=3, min_length=3)
-    theme: Optional[str] = Field(None, regex="^(light|dark)$")
+    theme: Optional[str] = Field(None, pattern="^(light|dark)$")
     notifications_enabled: Optional[bool] = None
 
     @validator('preferred_currency')
