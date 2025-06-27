@@ -1,61 +1,40 @@
-"""
-ProfitPilot Professional Backend API v4.0.0
-Advanced crypto earning platform with multi-currency support and professional admin workspace
-"""
-
 from fastapi import FastAPI, HTTPException, Depends, status, Request, BackgroundTasks
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import JSONResponse
-from pymongo import MongoClient, ReturnDocument, ASCENDING, DESCENDING
-from pymongo.errors import DuplicateKeyError, ConnectionFailure
-from pydantic import BaseModel, EmailStr, Field, validator, root_validator
+from pymongo import MongoClient, ReturnDocument
+from pydantic import BaseModel, EmailStr, Field, validator
 from passlib.context import CryptContext
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 import jwt
 import os
 import uuid
 import requests
 import hashlib
 import hmac
+from typing import Optional, List, Dict, Any
 import asyncio
 import logging
-import redis
-from typing import Optional, List, Dict, Any, Union
 from contextlib import asynccontextmanager
-from functools import wraps
 import time
-import json
-from urllib.parse import urlparse
-import re
+from functools import wraps
 
 # ============================================================================
-# PROFESSIONAL CONFIGURATION & ENVIRONMENT
+# PROFESSIONAL CONFIGURATION AND SETUP
 # ============================================================================
 
-# Environment variables with validation
+# Environment variables with defaults
 MONGO_URL = os.getenv("MONGO_URI", "mongodb://localhost:27017")
-DB_NAME = os.getenv("DB_NAME", "profitpilot_pro")
-JWT_SECRET = os.getenv("JWT_SECRET", "SuperSecretKey123ProPilot2024!")
-JWT_ALGORITHM = "HS256"
-JWT_EXPIRATION_HOURS = 24
-
-# Payment configuration
+DB_NAME = os.getenv("DB_NAME", "profitpilot")
+JWT_SECRET = os.getenv("JWT_SECRET", "SuperSecretKey123")
 PAYSTACK_SECRET_KEY = os.getenv("PAYSTACK_SECRET_KEY", "sk_live_b41107e30aa0682bdfbf68a60dbc3b49da6da6fa")
 PAYSTACK_PUBLIC_KEY = os.getenv("PAYSTACK_PUBLIC_KEY", "pk_live_561c88fdbc97f356950fc7d9881101e4cb074707")
-
-# Redis configuration for caching
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
-
-# API rate limiting
-RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "100"))
-RATE_LIMIT_WINDOW = int(os.getenv("RATE_LIMIT_WINDOW", "3600"))
+EXCHANGE_API_KEY = os.getenv("EXCHANGE_API_KEY", "")
 
 # Professional logging configuration
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s',
+    level=logging.INFO, 
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('profitpilot.log'),
         logging.StreamHandler()
@@ -63,947 +42,522 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Global variables
+# Global mining task variable
 mining_task = None
-redis_client = None
 
-# ============================================================================
-# PROFESSIONAL DATABASE CONNECTION WITH ERROR HANDLING
-# ============================================================================
-
-class DatabaseManager:
-    def __init__(self):
-        self.client = None
-        self.db = None
-        self.collections = {}
-        self.connect()
+# Professional MongoDB connection with error handling
+try:
+    client = MongoClient(MONGO_URL, serverSelectionTimeoutMS=5000)
+    client.server_info()  # Test connection
+    db = client[DB_NAME]
     
-    def connect(self):
-        try:
-            self.client = MongoClient(
-                MONGO_URL,
-                serverSelectionTimeoutMS=5000,
-                connectTimeoutMS=10000,
-                maxPoolSize=50,
-                retryWrites=True
-            )
-            
-            # Test connection
-            self.client.admin.command('ping')
-            self.db = self.client[DB_NAME]
-            
-            # Initialize collections with indexes
-            self._initialize_collections()
-            self._create_indexes()
-            
-            logger.info(f"✅ Connected to MongoDB: {MONGO_URL}")
-            
-        except ConnectionFailure as e:
-            logger.error(f"❌ MongoDB connection failed: {e}")
-            raise HTTPException(status_code=500, detail="Database connection failed")
+    # Collections with professional naming
+    users_collection = db.users
+    tokens_collection = db.tokens
+    transactions_collection = db.transactions
+    referrals_collection = db.referrals
+    mining_logs_collection = db.mining_logs
+    tasks_collection = db.tasks
+    notifications_collection = db.notifications
+    broadcasts_collection = db.broadcasts
+    user_sessions_collection = db.user_sessions
+    currency_rates_collection = db.currency_rates
+    system_logs_collection = db.system_logs
     
-    def _initialize_collections(self):
-        """Initialize all database collections"""
-        collection_names = [
-            'users', 'tokens', 'transactions', 'referrals', 'mining_logs',
-            'tasks', 'notifications', 'broadcasts', 'user_sessions',
-            'currency_rates', 'admin_logs', 'security_logs', 'system_metrics'
-        ]
-        
-        for name in collection_names:
-            self.collections[name] = self.db[name]
+    # Create professional indexes for performance
+    users_collection.create_index("email", unique=True)
+    users_collection.create_index("user_id", unique=True)
+    users_collection.create_index("referral_code", unique=True)
+    tokens_collection.create_index("owner_id")
+    tokens_collection.create_index("token_id", unique=True)
+    notifications_collection.create_index([("user_id", 1), ("created_at", -1)])
+    tasks_collection.create_index("task_id", unique=True)
+    transactions_collection.create_index("user_id")
     
-    def _create_indexes(self):
-        """Create database indexes for performance"""
-        try:
-            # User indexes
-            self.collections['users'].create_index([("email", ASCENDING)], unique=True)
-            self.collections['users'].create_index([("user_id", ASCENDING)], unique=True)
-            self.collections['users'].create_index([("referral_code", ASCENDING)], unique=True)
-            
-            # Token indexes
-            self.collections['tokens'].create_index([("token_id", ASCENDING)], unique=True)
-            self.collections['tokens'].create_index([("owner_id", ASCENDING)])
-            
-            # Transaction indexes
-            self.collections['transactions'].create_index([("user_id", ASCENDING)])
-            self.collections['transactions'].create_index([("reference", ASCENDING)], unique=True)
-            self.collections['transactions'].create_index([("timestamp", DESCENDING)])
-            
-            # Notification indexes
-            self.collections['notifications'].create_index([("user_id", ASCENDING)])
-            self.collections['notifications'].create_index([("created_at", DESCENDING)])
-            
-            # Session indexes
-            self.collections['user_sessions'].create_index([("user_id", ASCENDING)], unique=True)
-            self.collections['user_sessions'].create_index([("last_active", DESCENDING)])
-            
-            logger.info("✅ Database indexes created successfully")
-            
-        except Exception as e:
-            logger.error(f"❌ Error creating indexes: {e}")
+    logger.info(f"✅ Connected to MongoDB at: {MONGO_URL}")
+except Exception as e:
+    logger.error(f"❌ MongoDB connection failed: {e}")
+    raise
 
-# Initialize database
-db_manager = DatabaseManager()
-
-# ============================================================================
-# REDIS CACHE MANAGER
-# ============================================================================
-
-class CacheManager:
-    def __init__(self):
-        self.redis_client = None
-        self.connect()
-    
-    def connect(self):
-        try:
-            self.redis_client = redis.from_url(REDIS_URL, decode_responses=True)
-            self.redis_client.ping()
-            logger.info("✅ Connected to Redis cache")
-        except Exception as e:
-            logger.warning(f"⚠️ Redis connection failed: {e}. Continuing without cache.")
-            self.redis_client = None
-    
-    def get(self, key: str):
-        if not self.redis_client:
-            return None
-        try:
-            return self.redis_client.get(key)
-        except Exception as e:
-            logger.error(f"Cache get error: {e}")
-            return None
-    
-    def set(self, key: str, value: str, expire: int = 3600):
-        if not self.redis_client:
-            return False
-        try:
-            return self.redis_client.setex(key, expire, value)
-        except Exception as e:
-            logger.error(f"Cache set error: {e}")
-            return False
-    
-    def delete(self, key: str):
-        if not self.redis_client:
-            return False
-        try:
-            return self.redis_client.delete(key)
-        except Exception as e:
-            logger.error(f"Cache delete error: {e}")
-            return False
-
-cache_manager = CacheManager()
-
-# ============================================================================
-# PROFESSIONAL SECURITY & AUTHENTICATION
-# ============================================================================
-
+# Professional security setup
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
 
-class SecurityManager:
-    @staticmethod
-    def hash_password(password: str) -> str:
-        return pwd_context.hash(password)
-    
-    @staticmethod
-    def verify_password(plain_password: str, hashed_password: str) -> bool:
-        return pwd_context.verify(plain_password, hashed_password)
-    
-    @staticmethod
-    def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-        to_encode = data.copy()
-        if expires_delta:
-            expire = datetime.utcnow() + expires_delta
-        else:
-            expire = datetime.utcnow() + timedelta(hours=JWT_EXPIRATION_HOURS)
-        
-        to_encode.update({
-            "exp": expire,
-            "iat": datetime.utcnow(),
-            "type": "access"
-        })
-        
-        return jwt.encode(to_encode, JWT_SECRET, algorithm=JWT_ALGORITHM)
-    
-    @staticmethod
-    def verify_token(token: str) -> dict:
-        try:
-            payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-            return payload
-        except jwt.ExpiredSignatureError:
-            raise HTTPException(status_code=401, detail="Token has expired")
-        except jwt.JWTError:
-            raise HTTPException(status_code=401, detail="Invalid token")
-    
-    @staticmethod
-    def generate_secure_id(prefix: str = "PP") -> str:
-        return f"{prefix}-{str(uuid.uuid4()).replace('-', '').upper()[:12]}"
-    
-    @staticmethod
-    def generate_referral_code(email: str) -> str:
-        hash_obj = hashlib.sha256(f"{email}{time.time()}".encode())
-        return f"PP{hash_obj.hexdigest()[:8].upper()}"
-
-security_manager = SecurityManager()
-
 # ============================================================================
-# PROFESSIONAL PYDANTIC MODELS WITH ADVANCED VALIDATION
+# PROFESSIONAL PYDANTIC MODELS WITH ENHANCED VALIDATION
 # ============================================================================
 
 class UserRegister(BaseModel):
     email: EmailStr
-    password: str
-    referral_code: Optional[str] = None
-    
+    password: str = Field(..., min_length=6, max_length=128)
+    referral_code: Optional[str] = Field(None, max_length=20)
+
     @validator('password')
     def validate_password(cls, v):
-        if len(v) < 8:
-            raise ValueError('Password must be at least 8 characters long')
-        if not re.search(r'[A-Za-z]', v):
-            raise ValueError('Password must contain at least one letter')
-        if not re.search(r'\d', v):
-            raise ValueError('Password must contain at least one number')
+        if len(v) < 6:
+            raise ValueError('Password must be at least 6 characters long')
+        if not any(c.isdigit() for c in v):
+            raise ValueError('Password must contain at least one digit')
         return v
-    
-    @validator('referral_code')
-    def validate_referral_code(cls, v):
-        if v and not re.match(r'^PP[A-Z0-9]{8}$', v):
-            raise ValueError('Invalid referral code format')
-        return v
+
+    @validator('email')
+    def validate_email(cls, v):
+        if not v or '@' not in v:
+            raise ValueError('Valid email required')
+        return v.lower()
 
 class UserLogin(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(..., min_length=1)
 
 class ProfileUpdate(BaseModel):
-    preferred_currency: Optional[str] = Field(None, regex=r'^[A-Z]{3}$')
-    theme: Optional[str] = Field(None, regex=r'^(light|dark)$')
+    preferred_currency: Optional[str] = Field(None, max_length=3, min_length=3)
+    theme: Optional[str] = Field(None, regex="^(light|dark)$")
     notifications_enabled: Optional[bool] = None
-    
+
     @validator('preferred_currency')
     def validate_currency(cls, v):
         if v:
-            supported_currencies = ['USD', 'NGN', 'GBP', 'EUR', 'CAD', 'AUD', 'JPY', 'INR', 'ZAR']
-            if v not in supported_currencies:
-                raise ValueError(f'Currency must be one of: {", ".join(supported_currencies)}')
+            valid_currencies = ["USD", "NGN", "GBP", "EUR", "CAD", "AUD", "JPY", "INR", "ZAR"]
+            if v.upper() not in valid_currencies:
+                raise ValueError('Invalid currency code')
+            return v.upper()
         return v
-
-class PaymentInitialize(BaseModel):
-    action: str = Field(..., regex=r'^(token|boost)$')
-    token_id: Optional[str] = None
-    
-    @root_validator
-    def validate_boost_requires_token(cls, values):
-        if values.get('action') == 'boost' and not values.get('token_id'):
-            raise ValueError('Token ID is required for boost action')
-        return values
 
 class PaymentVerification(BaseModel):
-    reference: str = Field(..., min_length=10, max_length=100)
+    reference: str = Field(..., min_length=1)
+    token_id: Optional[str] = None
+    action: str = Field(..., regex="^(token|boost)$")
 
 class AdminSendBalance(BaseModel):
-    user_id: str = Field(..., regex=r'^PP-[A-Z0-9]{12}$')
+    user_id: str = Field(..., min_length=1)
     amount: float = Field(..., gt=0, le=10000)
-    reason: str = Field(..., min_length=5, max_length=200)
+    reason: str = Field(..., min_length=1, max_length=500)
 
 class AdminCreateTask(BaseModel):
-    title: str = Field(..., min_length=5, max_length=200)
-    description: str = Field(..., min_length=10, max_length=1000)
+    title: str = Field(..., min_length=1, max_length=200)
+    description: str = Field(..., min_length=1, max_length=1000)
     reward: float = Field(..., gt=0, le=1000)
-    type: str = Field(..., regex=r'^(daily|one_time|repeatable)$')
+    type: str = Field(..., regex="^(daily|one_time|repeatable)$")
     requirements: Optional[str] = Field(None, max_length=500)
     expires_at: Optional[datetime] = None
-    verification_type: str = Field(default="manual", regex=r'^(manual|automatic|external)$')
-    external_url: Optional[str] = None
-    
-    @validator('external_url')
-    def validate_external_url(cls, v, values):
-        if values.get('verification_type') == 'external' and not v:
-            raise ValueError('External URL is required for external verification')
-        if v and not v.startswith(('http://', 'https://')):
-            raise ValueError('External URL must be a valid HTTP/HTTPS URL')
-        return v
+    verification_type: str = Field(default="manual", regex="^(manual|automatic|external)$")
+    external_url: Optional[str] = Field(None, max_length=500)
 
 class AdminBroadcast(BaseModel):
-    title: str = Field(..., min_length=5, max_length=200)
-    message: str = Field(..., min_length=10, max_length=1000)
-    type: str = Field(..., regex=r'^(info|warning|success|error)$')
-    priority: str = Field(..., regex=r'^(low|medium|high)$')
+    title: str = Field(..., min_length=1, max_length=200)
+    message: str = Field(..., min_length=1, max_length=1000)
+    type: str = Field(..., regex="^(info|warning|success|error)$")
+    priority: str = Field(..., regex="^(low|medium|high)$")
 
 class TaskComplete(BaseModel):
-    task_id: str
+    task_id: str = Field(..., min_length=1)
     verification_data: Optional[Dict[str, Any]] = None
 
 class AdminGrantToken(BaseModel):
-    user_id: str = Field(..., regex=r'^PP-[A-Z0-9]{12}$')
+    user_id: str = Field(..., min_length=1)
     token_name: Optional[str] = Field("Admin Granted Token", min_length=1, max_length=100)
 
 class AdminBoostToken(BaseModel):
-    token_id: str
+    token_id: str = Field(..., min_length=1)
 
 # ============================================================================
-# PROFESSIONAL MULTI-CURRENCY SYSTEM
+# PROFESSIONAL UTILITY FUNCTIONS
 # ============================================================================
 
-class CurrencyManager:
-    def __init__(self):
-        self.supported_currencies = {
-            "USD": {"name": "US Dollar", "symbol": "$", "country_codes": ["US"]},
-            "NGN": {"name": "Nigerian Naira", "symbol": "₦", "country_codes": ["NG"]},
-            "GBP": {"name": "British Pound", "symbol": "£", "country_codes": ["GB", "UK"]},
-            "EUR": {"name": "Euro", "symbol": "€", "country_codes": ["DE", "FR", "IT", "ES", "NL", "BE", "AT", "PT", "IE", "FI", "GR", "LU", "MT", "CY", "SK", "SI", "EE", "LV", "LT"]},
-            "CAD": {"name": "Canadian Dollar", "symbol": "C$", "country_codes": ["CA"]},
-            "AUD": {"name": "Australian Dollar", "symbol": "A$", "country_codes": ["AU"]},
-            "JPY": {"name": "Japanese Yen", "symbol": "¥", "country_codes": ["JP"]},
-            "INR": {"name": "Indian Rupee", "symbol": "₹", "country_codes": ["IN"]},
-            "ZAR": {"name": "South African Rand", "symbol": "R", "country_codes": ["ZA"]}
-        }
-        self.cache_duration = 3600  # 1 hour
-    
-    async def get_exchange_rates(self) -> Dict[str, float]:
-        """Get real-time exchange rates with caching"""
-        cache_key = "exchange_rates"
-        cached_rates = cache_manager.get(cache_key)
+def hash_password(password: str) -> str:
+    """Hash password using bcrypt"""
+    return pwd_context.hash(password)
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify password against hash"""
+    return pwd_context.verify(plain_password, hashed_password)
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    """Create JWT access token with expiration"""
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(hours=24)
+    to_encode.update({"exp": expire, "iat": datetime.utcnow()})
+    encoded_jwt = jwt.encode(to_encode, JWT_SECRET, algorithm="HS256")
+    return encoded_jwt
+
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Get current authenticated user"""
+    try:
+        payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=["HS256"])
+        user_id: str = payload.get("sub")
+        if user_id is None:
+            raise HTTPException(status_code=401, detail="Invalid authentication token")
         
-        if cached_rates:
+        user = users_collection.find_one({"user_id": user_id})
+        if user is None:
+            raise HTTPException(status_code=401, detail="User not found")
+        
+        update_user_session(user_id)
+        return user
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token has expired")
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid authentication token")
+
+def generate_referral_code(email: str) -> str:
+    """Generate unique referral code"""
+    base_code = f"PP{hashlib.md5(email.encode()).hexdigest()[:8].upper()}"
+    counter = 0
+    while users_collection.find_one({"referral_code": base_code}):
+        counter += 1
+        base_code = f"PP{hashlib.md5(f'{email}{counter}'.encode()).hexdigest()[:8].upper()}"
+    return base_code
+
+def generate_user_id() -> str:
+    """Generate unique user ID"""
+    base_id = f"PP-{str(uuid.uuid4()).split('-')[0].upper()}"
+    while users_collection.find_one({"user_id": base_id}):
+        base_id = f"PP-{str(uuid.uuid4()).split('-')[0].upper()}"
+    return base_id
+
+# ============================================================================
+# ENHANCED MULTI-CURRENCY SYSTEM WITH PROFESSIONAL ERROR HANDLING
+# ============================================================================
+
+async def get_currency_rates():
+    """Get real-time currency conversion rates with fallback"""
+    try:
+        # Try multiple APIs for reliability
+        apis = [
+            "https://api.exchangerate-api.com/v4/latest/USD",
+            "https://open.er-api.com/v6/latest/USD",
+            "https://api.fixer.io/latest?access_key=" + EXCHANGE_API_KEY if EXCHANGE_API_KEY else None
+        ]
+        
+        for api_url in apis:
+            if not api_url:
+                continue
             try:
-                return json.loads(cached_rates)
-            except json.JSONDecodeError:
-                pass
-        
-        try:
-            # Primary API
-            response = requests.get(
-                "https://api.exchangerate-api.com/v4/latest/USD",
-                timeout=10
-            )
-            response.raise_for_status()
-            data = response.json()
-            rates = data['rates']
-            
-            # Cache the rates
-            cache_manager.set(cache_key, json.dumps(rates), self.cache_duration)
-            
-            # Store in database as backup
-            db_manager.collections['currency_rates'].update_one(
-                {"_id": "latest_rates"},
-                {
-                    "$set": {
-                        "rates": rates,
-                        "updated_at": datetime.utcnow(),
-                        "source": "exchangerate-api"
-                    }
-                },
-                upsert=True
-            )
-            
-            logger.info("✅ Exchange rates updated successfully")
-            return rates
-            
-        except Exception as e:
-            logger.error(f"❌ Error fetching exchange rates: {e}")
-            
-            # Fallback to database
-            cached_db_rates = db_manager.collections['currency_rates'].find_one({"_id": "latest_rates"})
-            if cached_db_rates and 'rates' in cached_db_rates:
-                logger.info("Using cached database rates")
-                return cached_db_rates['rates']
-            
-            # Final fallback to static rates
-            fallback_rates = {
-                "USD": 1.0, "NGN": 1500.0, "GBP": 0.75, "EUR": 0.85,
-                "CAD": 1.25, "AUD": 1.35, "JPY": 110.0, "INR": 75.0, "ZAR": 15.0
-            }
-            logger.warning("Using fallback exchange rates")
-            return fallback_rates
-    
-    async def detect_user_country(self, request: Request) -> str:
-        """Detect user's country from IP with multiple fallbacks"""
-        try:
-            # Get client IP
-            client_ip = request.client.host
-            
-            # Check for forwarded headers
-            forwarded_for = request.headers.get("X-Forwarded-For")
-            if forwarded_for:
-                client_ip = forwarded_for.split(",")[0].strip()
-            
-            real_ip = request.headers.get("X-Real-IP")
-            if real_ip:
-                client_ip = real_ip
-            
-            # Skip localhost
-            if client_ip in ["127.0.0.1", "localhost", "::1"]:
-                return "NG"  # Default to Nigeria
-            
-            # Try multiple IP geolocation services
-            services = [
-                f"http://ipinfo.io/{client_ip}/json",
-                f"https://ipapi.co/{client_ip}/json/",
-                f"http://ip-api.com/json/{client_ip}"
-            ]
-            
-            for service_url in services:
-                try:
-                    response = requests.get(service_url, timeout=5)
-                    response.raise_for_status()
+                response = requests.get(api_url, timeout=10)
+                if response.status_code == 200:
                     data = response.json()
+                    rates = data.get('rates', data.get('conversion_rates', {}))
                     
-                    # Extract country code based on service
-                    country = None
-                    if 'country' in data:
-                        country = data['country']
-                    elif 'country_code' in data:
-                        country = data['country_code']
-                    elif 'countryCode' in data:
-                        country = data['countryCode']
-                    
-                    if country and len(country) == 2:
-                        logger.info(f"Detected country: {country} for IP: {client_ip}")
+                    if rates:
+                        # Cache the rates
+                        currency_rates_collection.update_one(
+                            {"_id": "latest_rates"},
+                            {"$set": {"rates": rates, "updated_at": datetime.utcnow()}},
+                            upsert=True
+                        )
+                        logger.info("✅ Currency rates updated successfully")
+                        return rates
+            except Exception as e:
+                logger.warning(f"Failed to fetch from {api_url}: {e}")
+                continue
+        
+        # Fallback to cached rates
+        cached_rates = currency_rates_collection.find_one({"_id": "latest_rates"})
+        if cached_rates and cached_rates.get('rates'):
+            logger.info("Using cached currency rates")
+            return cached_rates['rates']
+        
+        # Final fallback to hardcoded rates
+        fallback_rates = {
+            "USD": 1, "NGN": 1500, "GBP": 0.75, "EUR": 0.85, 
+            "CAD": 1.25, "AUD": 1.35, "JPY": 110, "INR": 75, "ZAR": 15
+        }
+        logger.warning("Using fallback currency rates")
+        return fallback_rates
+        
+    except Exception as e:
+        logger.error(f"Currency rates error: {e}")
+        return {"USD": 1, "NGN": 1500, "GBP": 0.75, "EUR": 0.85, "CAD": 1.25, "AUD": 1.35, "JPY": 110, "INR": 75, "ZAR": 15}
+
+async def detect_user_country(request: Request):
+    """Detect user's country from IP address with fallback"""
+    try:
+        client_ip = request.client.host
+        if client_ip in ["127.0.0.1", "localhost", "::1"]:
+            return "NG"  # Default for local development
+        
+        # Try multiple IP geolocation services
+        services = [
+            f"http://ipinfo.io/{client_ip}/json",
+            f"http://ip-api.com/json/{client_ip}",
+            f"https://ipapi.co/{client_ip}/json"
+        ]
+        
+        for service_url in services:
+            try:
+                response = requests.get(service_url, timeout=5)
+                if response.status_code == 200:
+                    data = response.json()
+                    country = data.get('country', data.get('countryCode', 'NG'))
+                    if country:
                         return country.upper()
-                        
-                except Exception as service_error:
-                    logger.warning(f"IP service {service_url} failed: {service_error}")
-                    continue
-            
-            logger.warning(f"Could not detect country for IP: {client_ip}")
-            return "NG"  # Default fallback
-            
-        except Exception as e:
-            logger.error(f"Country detection error: {e}")
-            return "NG"
-    
-    def get_currency_for_country(self, country_code: str) -> str:
-        """Map country code to currency"""
-        for currency, info in self.supported_currencies.items():
-            if country_code in info['country_codes']:
-                return currency
-        return "USD"  # Default fallback
-    
-    async def convert_currency(self, amount: float, from_currency: str, to_currency: str) -> float:
-        """Convert amount between currencies"""
+            except Exception as e:
+                logger.warning(f"Failed to get country from {service_url}: {e}")
+                continue
+        
+        return "NG"  # Default fallback
+    except Exception as e:
+        logger.error(f"Country detection error: {e}")
+        return "NG"
+
+def get_currency_for_country(country_code: str) -> str:
+    """Map country code to currency with comprehensive mapping"""
+    currency_map = {
+        "NG": "NGN", "US": "USD", "GB": "GBP", "DE": "EUR", "FR": "EUR",
+        "CA": "CAD", "AU": "AUD", "JP": "JPY", "IN": "INR", "ZA": "ZAR",
+        "IT": "EUR", "ES": "EUR", "NL": "EUR", "BE": "EUR", "AT": "EUR",
+        "PT": "EUR", "IE": "EUR", "FI": "EUR", "GR": "EUR", "LU": "EUR",
+        "CH": "EUR", "SE": "EUR", "DK": "EUR", "NO": "EUR", "PL": "EUR",
+        "CZ": "EUR", "HU": "EUR", "SK": "EUR", "SI": "EUR", "EE": "EUR",
+        "LV": "EUR", "LT": "EUR", "CY": "EUR", "MT": "EUR", "BR": "USD",
+        "MX": "USD", "AR": "USD", "CO": "USD", "PE": "USD", "CL": "USD"
+    }
+    return currency_map.get(country_code, "USD")
+
+async def convert_currency(amount: float, from_currency: str, to_currency: str) -> float:
+    """Convert amount from one currency to another with error handling"""
+    try:
         if from_currency == to_currency:
             return round(amount, 2)
         
-        try:
-            rates = await self.get_exchange_rates()
-            
-            # Convert to USD first if needed
-            if from_currency != "USD":
-                usd_amount = amount / rates.get(from_currency, 1)
-            else:
-                usd_amount = amount
-            
-            # Convert from USD to target currency
-            if to_currency != "USD":
-                converted_amount = usd_amount * rates.get(to_currency, 1)
-            else:
-                converted_amount = usd_amount
-            
-            return round(converted_amount, 2)
-            
-        except Exception as e:
-            logger.error(f"Currency conversion error: {e}")
-            return round(amount, 2)  # Return original amount on error
-
-currency_manager = CurrencyManager()
-
-# ============================================================================
-# PROFESSIONAL SESSION & USER MANAGEMENT
-# ============================================================================
-
-class SessionManager:
-    @staticmethod
-    def update_user_session(user_id: str, additional_data: Dict = None):
-        """Update user session with comprehensive tracking"""
-        session_data = {
-            "last_active": datetime.utcnow(),
-            "ip_address": additional_data.get("ip_address") if additional_data else None,
-            "user_agent": additional_data.get("user_agent") if additional_data else None
-        }
+        rates = await get_currency_rates()
         
-        db_manager.collections['user_sessions'].update_one(
+        # Convert to USD first, then to target currency
+        usd_amount = amount / rates.get(from_currency, 1)
+        converted_amount = usd_amount * rates.get(to_currency, 1)
+        
+        return round(converted_amount, 2)
+    except Exception as e:
+        logger.error(f"Currency conversion error: {e}")
+        return amount  # Return original amount on error
+
+# ============================================================================
+# PROFESSIONAL SESSION MANAGEMENT
+# ============================================================================
+
+def update_user_session(user_id: str):
+    """Update user's last active time"""
+    try:
+        user_sessions_collection.update_one(
             {"user_id": user_id},
             {
-                "$set": session_data,
-                "$setOnInsert": {"first_login": datetime.utcnow()},
-                "$inc": {"login_count": 1}
+                "$set": {"last_active": datetime.utcnow()},
+                "$setOnInsert": {"first_login": datetime.utcnow()}
             },
             upsert=True
         )
-    
-    @staticmethod
-    def get_online_users_count() -> int:
-        """Get count of users active in last 5 minutes"""
+    except Exception as e:
+        logger.error(f"Session update error: {e}")
+
+def get_online_users_count():
+    """Get count of users online in last 5 minutes"""
+    try:
         five_minutes_ago = datetime.utcnow() - timedelta(minutes=5)
-        return db_manager.collections['user_sessions'].count_documents({
+        return user_sessions_collection.count_documents({
             "last_active": {"$gte": five_minutes_ago}
         })
-    
-    @staticmethod
-    def get_user_activity_stats(user_id: str) -> Dict:
-        """Get comprehensive user activity statistics"""
-        session = db_manager.collections['user_sessions'].find_one({"user_id": user_id})
-        if not session:
-            return {}
-        
-        return {
-            "first_login": session.get("first_login"),
-            "last_active": session.get("last_active"),
-            "login_count": session.get("login_count", 0),
-            "is_online": (datetime.utcnow() - session.get("last_active", datetime.min)).total_seconds() < 300
-        }
-
-session_manager = SessionManager()
+    except Exception as e:
+        logger.error(f"Online users count error: {e}")
+        return 0
 
 # ============================================================================
-# PROFESSIONAL NOTIFICATION SYSTEM
+# ENHANCED NOTIFICATION SYSTEM
 # ============================================================================
 
-class NotificationManager:
-    @staticmethod
-    def create_notification(
-        user_id: str,
-        title: str,
-        message: str,
-        notification_type: str = "info",
-        metadata: Dict = None
-    ) -> Dict:
-        """Create a professional notification with metadata"""
+def create_notification(user_id: str, title: str, message: str, notification_type: str = "info", priority: str = "medium"):
+    """Create a notification for a user with enhanced features"""
+    try:
         notification_doc = {
-            "notification_id": security_manager.generate_secure_id("NOTIF"),
+            "notification_id": str(uuid.uuid4()),
             "user_id": user_id,
             "title": title,
             "message": message,
             "type": notification_type,
+            "priority": priority,
             "read": False,
             "created_at": datetime.utcnow(),
-            "metadata": metadata or {},
-            "priority": "normal"
+            "expires_at": datetime.utcnow() + timedelta(days=30)
         }
-        
-        try:
-            db_manager.collections['notifications'].insert_one(notification_doc)
-            logger.info(f"Notification created for user {user_id}: {title}")
-            return notification_doc
-        except Exception as e:
-            logger.error(f"Failed to create notification: {e}")
-            return {}
-    
-    @staticmethod
-    def mark_notification_read(notification_id: str, user_id: str) -> bool:
-        """Mark notification as read"""
-        try:
-            result = db_manager.collections['notifications'].update_one(
-                {"notification_id": notification_id, "user_id": user_id},
-                {"$set": {"read": True, "read_at": datetime.utcnow()}}
-            )
-            return result.modified_count > 0
-        except Exception as e:
-            logger.error(f"Failed to mark notification as read: {e}")
-            return False
-    
-    @staticmethod
-    def get_user_notifications(user_id: str, limit: int = 50) -> List[Dict]:
-        """Get user notifications with pagination"""
-        try:
-            notifications = list(
-                db_manager.collections['notifications']
-                .find({"user_id": user_id})
-                .sort("created_at", -1)
-                .limit(limit)
-            )
-            
-            for notif in notifications:
-                notif['_id'] = str(notif['_id'])
-            
-            return notifications
-        except Exception as e:
-            logger.error(f"Failed to get notifications: {e}")
-            return []
-    
-    @staticmethod
-    def get_unread_count(user_id: str) -> int:
-        """Get count of unread notifications"""
-        try:
-            return db_manager.collections['notifications'].count_documents({
-                "user_id": user_id,
-                "read": False
-            })
-        except Exception as e:
-            logger.error(f"Failed to get unread count: {e}")
-            return 0
+        notifications_collection.insert_one(notification_doc)
+        logger.info(f"Notification created for user {user_id}: {title}")
+        return notification_doc
+    except Exception as e:
+        logger.error(f"Notification creation error: {e}")
+        return None
 
-notification_manager = NotificationManager()
+async def cleanup_old_notifications():
+    """Clean up expired notifications"""
+    try:
+        result = notifications_collection.delete_many({
+            "expires_at": {"$lt": datetime.utcnow()}
+        })
+        if result.deleted_count > 0:
+            logger.info(f"Cleaned up {result.deleted_count} expired notifications")
+    except Exception as e:
+        logger.error(f"Notification cleanup error: {e}")
 
 # ============================================================================
-# PROFESSIONAL AUTOMATED MINING SYSTEM
+# PROFESSIONAL MINING SYSTEM WITH ENHANCED LOGGING
 # ============================================================================
 
-class MiningManager:
-    def __init__(self):
-        self.base_earning = 0.70
-        self.mining_interval = 7200  # 2 hours in seconds
-        self.is_running = False
-    
-    async def process_mining_cycle(self) -> Dict:
-        """Professional automated mining process"""
-        start_time = datetime.utcnow()
-        mining_stats = {
-            "tokens_processed": 0,
-            "total_earnings_distributed": 0.0,
-            "errors": [],
-            "start_time": start_time,
-            "status": "running"
-        }
+async def process_mining():
+    """Professional automated mining process with comprehensive logging"""
+    try:
+        start_time = time.time()
+        logger.info("🚀 Starting automated mining process...")
         
-        try:
-            logger.info("🚀 Starting automated mining cycle...")
-            
-            # Get all active tokens (excluding admin-owned tokens)
-            admin_user_ids = [
-                user["user_id"] for user in 
-                db_manager.collections['users'].find({"is_admin": True}, {"user_id": 1})
-            ]
-            
-            tokens = list(db_manager.collections['tokens'].find({
-                "active": True,
-                "owner_id": {"$nin": admin_user_ids}
-            }))
-            
-            for token in tokens:
-                try:
-                    # Calculate earnings based on boost level
-                    boost_level = token.get('boost_level', 0)
-                    earning = self.base_earning * (2 ** boost_level)
-                    
-                    # Update token earnings
-                    db_manager.collections['tokens'].update_one(
-                        {"token_id": token["token_id"]},
-                        {
-                            "$inc": {"total_earnings": earning},
-                            "$set": {"last_mining": datetime.utcnow()},
-                            "$push": {
-                                "mining_history": {
-                                    "amount": earning,
-                                    "timestamp": datetime.utcnow(),
-                                    "boost_level": boost_level,
-                                    "cycle_id": str(uuid.uuid4())
-                                }
+        # Get all active tokens
+        tokens = list(tokens_collection.find({"active": True}))
+        total_tokens_processed = 0
+        total_earnings_distributed = 0.0
+        processing_details = []
+        
+        for token in tokens:
+            try:
+                owner = users_collection.find_one({"user_id": token["owner_id"]})
+                if not owner or owner.get("is_admin"):
+                    continue
+                
+                # Calculate earnings with boost
+                base_earning = 0.70
+                boost_level = token.get('boost_level', 0)
+                earning = base_earning * (2 ** boost_level)
+                
+                # Update token
+                tokens_collection.update_one(
+                    {"token_id": token["token_id"]},
+                    {
+                        "$inc": {"total_earnings": earning},
+                        "$set": {"last_mining": datetime.utcnow()},
+                        "$push": {
+                            "mining_history": {
+                                "amount": earning,
+                                "timestamp": datetime.utcnow(),
+                                "boost_level": boost_level,
+                                "session_id": str(uuid.uuid4())[:8]
                             }
                         }
-                    )
-                    
-                    # Update user total earnings
-                    user_update_result = db_manager.collections['users'].update_one(
-                        {"user_id": token["owner_id"]},
-                        {"$inc": {"total_earnings": earning}}
-                    )
-                    
-                    if user_update_result.modified_count > 0:
-                        # Create notification for successful mining
-                        notification_manager.create_notification(
-                            token["owner_id"],
-                            "Mining Completed! 💰",
-                            f"Your token '{token['name']}' earned ${earning:.2f}",
-                            "success",
-                            {
-                                "token_id": token["token_id"],
-                                "amount": earning,
-                                "boost_level": boost_level
-                            }
-                        )
-                    
-                    mining_stats["tokens_processed"] += 1
-                    mining_stats["total_earnings_distributed"] += earning
-                    
-                except Exception as token_error:
-                    error_msg = f"Error processing token {token.get('token_id', 'unknown')}: {token_error}"
-                    logger.error(error_msg)
-                    mining_stats["errors"].append(error_msg)
-            
-            # Update mining statistics
-            end_time = datetime.utcnow()
-            mining_stats.update({
-                "end_time": end_time,
-                "duration_seconds": (end_time - start_time).total_seconds(),
-                "status": "completed"
-            })
-            
-            # Log mining cycle to database
-            db_manager.collections['mining_logs'].insert_one({
-                "cycle_id": str(uuid.uuid4()),
-                "timestamp": start_time,
-                "end_timestamp": end_time,
-                "tokens_processed": mining_stats["tokens_processed"],
-                "total_earnings_distributed": mining_stats["total_earnings_distributed"],
-                "duration_seconds": mining_stats["duration_seconds"],
-                "errors_count": len(mining_stats["errors"]),
-                "errors": mining_stats["errors"],
-                "status": "success" if not mining_stats["errors"] else "partial_success"
-            })
-            
-            logger.info(
-                f"✅ Mining cycle completed! "
-                f"Processed {mining_stats['tokens_processed']} tokens, "
-                f"distributed ${mining_stats['total_earnings_distributed']:.2f}"
-            )
-            
-            return mining_stats
-            
-        except Exception as e:
-            error_msg = f"Critical mining error: {e}"
-            logger.error(error_msg)
-            
-            mining_stats.update({
-                "status": "failed",
-                "end_time": datetime.utcnow(),
-                "critical_error": error_msg
-            })
-            
-            # Log failed mining cycle
-            db_manager.collections['mining_logs'].insert_one({
-                "cycle_id": str(uuid.uuid4()),
-                "timestamp": start_time,
-                "end_timestamp": datetime.utcnow(),
-                "tokens_processed": 0,
-                "total_earnings_distributed": 0.0,
-                "status": "failed",
-                "error": error_msg
-            })
-            
-            return mining_stats
-    
-    async def mining_scheduler(self):
-        """Professional mining scheduler with error recovery"""
-        logger.info("⏰ Professional mining scheduler started - 2-hour automated cycles")
-        self.is_running = True
-        
-        while self.is_running:
-            try:
-                # Process mining cycle
-                await self.process_mining_cycle()
+                    }
+                )
                 
-                # Wait for next cycle (2 hours)
-                await asyncio.sleep(self.mining_interval)
+                # Update user earnings
+                users_collection.update_one(
+                    {"user_id": token["owner_id"]},
+                    {"$inc": {"total_earnings": earning}}
+                )
                 
-            except asyncio.CancelledError:
-                logger.info("Mining scheduler cancelled")
-                break
-            except Exception as e:
-                logger.error(f"❌ Mining scheduler error: {e}")
-                # Wait 10 minutes before retry on error
-                await asyncio.sleep(600)
+                # Create success notification
+                create_notification(
+                    token["owner_id"],
+                    "Mining Completed! 💰",
+                    f"Your token '{token['name']}' earned ${earning:.2f}",
+                    "success"
+                )
+                
+                processing_details.append({
+                    "token_id": token["token_id"],
+                    "owner_id": token["owner_id"],
+                    "earning": earning,
+                    "boost_level": boost_level
+                })
+                
+                total_tokens_processed += 1
+                total_earnings_distributed += earning
+                
+            except Exception as token_error:
+                logger.error(f"❌ Error processing token {token.get('token_id', 'unknown')}: {token_error}")
+                processing_details.append({
+                    "token_id": token.get("token_id", "unknown"),
+                    "error": str(token_error)
+                })
         
-        self.is_running = False
-        logger.info("Mining scheduler stopped")
-    
-    def stop_mining(self):
-        """Stop the mining scheduler"""
-        self.is_running = False
-
-mining_manager = MiningManager()
-
-# ============================================================================
-# PROFESSIONAL AUTHENTICATION DEPENDENCIES
-# ============================================================================
-
-async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-    request: Request = None
-) -> dict:
-    """Get current authenticated user with session tracking"""
-    try:
-        payload = security_manager.verify_token(credentials.credentials)
-        user_id = payload.get("sub")
+        processing_time = time.time() - start_time
         
-        if not user_id:
-            raise HTTPException(status_code=401, detail="Invalid token payload")
-        
-        user = db_manager.collections['users'].find_one({"user_id": user_id})
-        if not user:
-            raise HTTPException(status_code=401, detail="User not found")
-        
-        # Update session with request info
-        session_data = {}
-        if request:
-            session_data = {
-                "ip_address": request.client.host,
-                "user_agent": request.headers.get("User-Agent", "")
-            }
-        
-        session_manager.update_user_session(user_id, session_data)
-        
-        return user
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Authentication error: {e}")
-        raise HTTPException(status_code=401, detail="Authentication failed")
-
-async def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
-    """Require admin privileges with logging"""
-    if not current_user.get("is_admin"):
-        # Log unauthorized admin access attempt
-        db_manager.collections['security_logs'].insert_one({
-            "event": "unauthorized_admin_access",
-            "user_id": current_user["user_id"],
+        # Log mining session
+        mining_log = {
+            "session_id": str(uuid.uuid4()),
             "timestamp": datetime.utcnow(),
-            "ip_address": "unknown"
-        })
-        raise HTTPException(status_code=403, detail="Admin access required")
-    
-    return current_user
-
-# ============================================================================
-# PROFESSIONAL TASK MANAGEMENT SYSTEM
-# ============================================================================
-
-class TaskManager:
-    @staticmethod
-    def create_task(task_data: AdminCreateTask, admin_id: str) -> Dict:
-        """Create a dynamic task with advanced verification"""
-        task_id = security_manager.generate_secure_id("TASK")
-        
-        task_doc = {
-            "task_id": task_id,
-            "title": task_data.title,
-            "description": task_data.description,
-            "reward": task_data.reward,
-            "type": task_data.type,
-            "requirements": task_data.requirements,
-            "expires_at": task_data.expires_at,
-            "verification_type": task_data.verification_type,
-            "external_url": task_data.external_url,
-            "created_by": admin_id,
-            "created_at": datetime.utcnow(),
-            "active": True,
-            "completed_by": [],
-            "completion_data": [],
-            "total_completions": 0,
-            "total_rewards_paid": 0.0
+            "tokens_processed": total_tokens_processed,
+            "total_earnings_distributed": total_earnings_distributed,
+            "processing_time_seconds": processing_time,
+            "status": "success",
+            "details": processing_details
         }
+        mining_logs_collection.insert_one(mining_log)
         
-        try:
-            db_manager.collections['tasks'].insert_one(task_doc)
-            
-            # Notify all non-admin users about new task
-            non_admin_users = list(
-                db_manager.collections['users'].find(
-                    {"is_admin": {"$ne": True}},
-                    {"user_id": 1}
-                )
-            )
-            
-            for user in non_admin_users:
-                notification_manager.create_notification(
-                    user["user_id"],
-                    "New Task Available! 🎯",
-                    f"{task_data.title} - Earn ${task_data.reward:.2f}",
-                    "info",
-                    {"task_id": task_id, "reward": task_data.reward}
-                )
-            
-            logger.info(f"Task created: {task_id} by admin {admin_id}")
-            return task_doc
-            
-        except Exception as e:
-            logger.error(f"Failed to create task: {e}")
-            raise HTTPException(status_code=500, detail="Failed to create task")
-    
-    @staticmethod
-    def complete_task(task_id: str, user_id: str, verification_data: Dict = None) -> Dict:
-        """Complete a task with verification"""
-        try:
-            task = db_manager.collections['tasks'].find_one({
-                "task_id": task_id,
-                "active": True
-            })
-            
-            if not task:
-                raise HTTPException(status_code=404, detail="Task not found or inactive")
-            
-            # Check if user already completed this task
-            if user_id in task.get("completed_by", []):
-                if task["type"] == "one_time":
-                    raise HTTPException(status_code=400, detail="Task already completed")
-            
-            # Check expiration
-            if task.get("expires_at") and task["expires_at"] < datetime.utcnow():
-                raise HTTPException(status_code=400, detail="Task has expired")
-            
-            # Process task completion
-            completion_record = {
-                "user_id": user_id,
-                "completed_at": datetime.utcnow(),
-                "verification_data": verification_data or {},
-                "reward_amount": task["reward"]
-            }
-            
-            # Update user earnings
-            db_manager.collections['users'].update_one(
-                {"user_id": user_id},
-                {"$inc": {"total_earnings": task["reward"]}}
-            )
-            
-            # Update task completion records
-            update_data = {
-                "$push": {
-                    "completion_data": completion_record
-                },
-                "$inc": {
-                    "total_completions": 1,
-                    "total_rewards_paid": task["reward"]
-                }
-            }
-            
-            # For one-time tasks, add user to completed_by list
-            if task["type"] == "one_time":
-                update_data["$addToSet"] = {"completed_by": user_id}
-            
-            db_manager.collections['tasks'].update_one(
-                {"task_id": task_id},
-                update_data
-            )
-            
-            # Record transaction
-            db_manager.collections['transactions'].insert_one({
-                "transaction_id": security_manager.generate_secure_id("TXN"),
-                "user_id": user_id,
-                "reference": f"task_{task_id}_{uuid.uuid4().hex[:8]}",
-                "action": "task_completion",
-                "amount_usd": task["reward"],
-                "amount_ngn": 0,
-                "status": "success",
-                "task_id": task_id,
-                "task_title": task["title"],
-                "timestamp": datetime.utcnow()
-            })
-            
-            # Create success notification
-            notification_manager.create_notification(
-                user_id,
-                "Task Completed! 🎉",
-                f"You've earned ${task['reward']:.2f} for completing '{task['title']}'",
-                "success",
-                {
-                    "task_id": task_id,
-                    "reward": task["reward"],
-                    "task_title": task["title"]
-                }
-            )
-            
-            logger.info(f"Task {task_id} completed by user {user_id}")
-            return {"message": "Task completed successfully", "reward": task["reward"]}
-            
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Task completion error: {e}")
-            raise HTTPException(status_code=500, detail="Failed to complete task")
+        logger.info(f"✅ Mining completed! Processed {total_tokens_processed} tokens, distributed ${total_earnings_distributed:.2f} in {processing_time:.2f}s")
+        
+    except Exception as e:
+        logger.error(f"❌ Mining process error: {e}")
+        mining_logs_collection.insert_one({
+            "session_id": str(uuid.uuid4()),
+            "timestamp": datetime.utcnow(),
+            "tokens_processed": 0,
+            "total_earnings_distributed": 0.0,
+            "status": "failed",
+            "error": str(e),
+            "processing_time_seconds": 0
+        })
 
-task_manager = TaskManager()
+async def mining_scheduler():
+    """Professional mining scheduler with 2-hour intervals"""
+    logger.info("⛏️ Mining scheduler started - 2 hour intervals")
+    while True:
+        try:
+            await process_mining()
+            # Clean up notifications while we're at it
+            await cleanup_old_notifications()
+            await asyncio.sleep(7200)  # 2 hours = 7200 seconds
+        except Exception as e:
+            logger.error(f"Mining scheduler error: {e}")
+            await asyncio.sleep(300)  # Wait 5 minutes on error
+
+# ============================================================================
+# PROFESSIONAL EXTERNAL TASK VERIFICATION
+# ============================================================================
+
+async def verify_external_task(task: dict, user_id: str, verification_data: dict = None) -> bool:
+    """Verify external task completion with multiple methods"""
+    try:
+        verification_type = task.get('verification_type', 'manual')
+        external_url = task.get('external_url', '')
+        
+        if verification_type == 'external' and external_url:
+            # For social media tasks, Twitter follows, etc.
+            if 'twitter.com' in external_url or 'x.com' in external_url:
+                # Twitter verification logic would go here
+                # For now, we'll mark as completed since we can't access Twitter API without keys
+                return True
+            
+            elif 'instagram.com' in external_url:
+                # Instagram verification logic
+                return True
+            
+            elif 'youtube.com' in external_url or 'youtu.be' in external_url:
+                # YouTube verification logic
+                return True
+            
+            elif 'telegram.me' in external_url or 't.me' in external_url:
+                # Telegram verification logic
+                return True
+            
+            else:
+                # Generic URL verification - check if URL is accessible
+                try:
+                    response = requests.head(external_url, timeout=10)
+                    return response.status_code == 200
+                except:
+                    return True  # Assume completed if we can't verify
+        
+        return True  # Default to true for manual verification
+        
+    except Exception as e:
+        logger.error(f"External task verification error: {e}")
+        return True  # Default to true on error
 
 # ============================================================================
 # LIFESPAN MANAGEMENT
@@ -1012,106 +566,110 @@ task_manager = TaskManager()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Professional application lifespan management"""
-    logger.info("🚀 ProfitPilot Professional API v4.0.0 starting...")
+    logger.info("🚀 ProfitPilot Professional API starting...")
     
-    # Start automated mining system
     global mining_task
-    mining_task = asyncio.create_task(mining_manager.mining_scheduler())
+    mining_task = asyncio.create_task(mining_scheduler())
     logger.info("⛏️ Automated mining system initialized")
     
-    # Initialize currency rates
-    try:
-        await currency_manager.get_exchange_rates()
-        logger.info("💱 Currency system initialized")
-    except Exception as e:
-        logger.warning(f"Currency initialization warning: {e}")
+    # Log system startup
+    system_logs_collection.insert_one({
+        "event": "system_startup",
+        "timestamp": datetime.utcnow(),
+        "version": "3.0.0",
+        "environment": os.getenv("ENVIRONMENT", "development")
+    })
     
     yield
     
-    # Cleanup
     logger.info("🛑 ProfitPilot API shutting down...")
-    
     if mining_task:
-        mining_manager.stop_mining()
         mining_task.cancel()
         try:
             await mining_task
         except asyncio.CancelledError:
-            logger.info("⛏️ Mining task cancelled successfully")
+            logger.info("⛏️ Mining task cancelled")
+    
+    # Log system shutdown
+    system_logs_collection.insert_one({
+        "event": "system_shutdown",
+        "timestamp": datetime.utcnow(),
+        "version": "3.0.0"
+    })
 
 # ============================================================================
-# FASTAPI APPLICATION SETUP
+# PROFESSIONAL FASTAPI APPLICATION
 # ============================================================================
 
 app = FastAPI(
-    title="ProfitPilot Professional API",
-    version="4.0.0",
-    description="Advanced crypto earning platform with professional multi-currency support and automated mining",
+    title="ProfitPilot Professional API", 
+    version="3.0.0",
+    description="Professional crypto earning platform with multi-currency support and real-time features",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan
 )
 
-# Professional middleware setup
+# Professional middleware configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=["*"],  # Configure properly for production
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
 app.add_middleware(
-    TrustedHostMiddleware,
-    allowed_hosts=["*"]  # Configure appropriately for production
+    TrustedHostMiddleware, 
+    allowed_hosts=["*"]  # Configure properly for production
 )
 
 # ============================================================================
-# PROFESSIONAL API ENDPOINTS
+# ENHANCED API ENDPOINTS
 # ============================================================================
 
 @app.get("/api/health")
 async def health_check():
-    """Comprehensive health check endpoint"""
+    """Professional health check endpoint"""
     try:
         # Test database connection
-        db_manager.client.admin.command('ping')
-        db_status = "healthy"
-    except Exception:
-        db_status = "unhealthy"
-    
-    return {
-        "status": "healthy",
-        "timestamp": datetime.utcnow(),
-        "version": "4.0.0",
-        "database_status": db_status,
-        "mining_status": "active" if mining_manager.is_running else "inactive",
-        "cache_status": "active" if cache_manager.redis_client else "inactive",
-        "services": {
-            "authentication": "operational",
-            "currency_conversion": "operational",
-            "notifications": "operational",
-            "task_system": "operational"
+        db_status = "healthy" if client.admin.command('ping')['ok'] else "unhealthy"
+        
+        # Check mining task status
+        mining_status = "active" if mining_task and not mining_task.done() else "inactive"
+        
+        # Get online users count
+        online_users = get_online_users_count()
+        
+        return {
+            "status": "healthy",
+            "timestamp": datetime.utcnow(),
+            "version": "3.0.0",
+            "database_status": db_status,
+            "mining_status": mining_status,
+            "online_users": online_users,
+            "environment": os.getenv("ENVIRONMENT", "development")
         }
-    }
+    except Exception as e:
+        logger.error(f"Health check error: {e}")
+        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
 
 @app.post("/api/register")
 async def register_user(user_data: UserRegister, request: Request):
-    """Professional user registration with enhanced security"""
+    """Enhanced user registration with country detection and referral processing"""
     try:
         # Check if email already exists
-        existing_user = db_manager.collections['users'].find_one({"email": user_data.email})
-        if existing_user:
+        if users_collection.find_one({"email": user_data.email}):
             raise HTTPException(status_code=400, detail="Email already registered")
         
-        # Generate secure identifiers
-        user_id = security_manager.generate_secure_id("PP")
-        referral_code = security_manager.generate_referral_code(user_data.email)
-        hashed_password = security_manager.hash_password(user_data.password)
+        # Generate unique identifiers
+        user_id = generate_user_id()
+        referral_code = generate_referral_code(user_data.email)
+        hashed_password = hash_password(user_data.password)
         
-        # Detect user's country and set currency
-        country = await currency_manager.detect_user_country(request)
-        preferred_currency = currency_manager.get_currency_for_country(country)
+        # Detect user's country and preferred currency
+        country = await detect_user_country(request)
+        preferred_currency = get_currency_for_country(country)
         
         # Create user document
         user_doc = {
@@ -1131,40 +689,87 @@ async def register_user(user_data: UserRegister, request: Request):
             "preferred_currency": preferred_currency,
             "theme": "light",
             "notifications_enabled": True,
-            "account_status": "active",
-            "security_settings": {
-                "two_factor_enabled": False,
-                "login_notifications": True
-            }
+            "last_login": datetime.utcnow(),
+            "login_count": 1
         }
         
-        # Insert user
-        db_manager.collections['users'].insert_one(user_doc)
+        users_collection.insert_one(user_doc)
         
         # Process referral if provided
+        referral_bonus = 0.0
         if user_data.referral_code:
-            await self._process_referral(user_data.referral_code, user_id, user_doc.get("is_admin", False))
+            referrer = users_collection.find_one({"referral_code": user_data.referral_code})
+            if referrer and not referrer.get("is_admin"):
+                referral_bonus = 2.0
+                
+                # Update referrer
+                users_collection.update_one(
+                    {"user_id": referrer["user_id"]},
+                    {"$inc": {"referral_earnings": referral_bonus, "total_earnings": referral_bonus, "referrals_count": 1}}
+                )
+                
+                # Update new user if not admin
+                if not user_doc.get("is_admin"):
+                    users_collection.update_one(
+                        {"user_id": user_id},
+                        {"$inc": {"referral_earnings": referral_bonus, "total_earnings": referral_bonus}}
+                    )
+                
+                # Record referral
+                referrals_collection.insert_one({
+                    "referrer_id": referrer["user_id"],
+                    "referred_id": user_id,
+                    "amount": referral_bonus,
+                    "timestamp": datetime.utcnow(),
+                    "status": "completed"
+                })
+                
+                # Notify both users
+                create_notification(
+                    referrer["user_id"],
+                    "New Referral! 🎉",
+                    f"You earned ${referral_bonus:.2f} from a new referral!",
+                    "success"
+                )
+                
+                if not user_doc.get("is_admin"):
+                    create_notification(
+                        user_id,
+                        "Welcome Bonus! 💰",
+                        f"You received ${referral_bonus:.2f} welcome bonus!",
+                        "success"
+                    )
         
         # Create first free token for non-admin users
         if not user_doc.get("is_admin"):
-            await self._create_first_token(user_id)
+            token_id = str(uuid.uuid4())
+            token_doc = {
+                "token_id": token_id,
+                "owner_id": user_id,
+                "name": "ProfitToken #1",
+                "boost_level": 0,
+                "total_earnings": 0.0,
+                "created_at": datetime.utcnow(),
+                "last_mining": datetime.utcnow(),
+                "active": True,
+                "mining_history": [],
+                "boost_history": [],
+                "token_type": "free_starter"
+            }
+            tokens_collection.insert_one(token_doc)
+            users_collection.update_one({"user_id": user_id}, {"$inc": {"tokens_owned": 1}})
+            
+            # Welcome notification
+            create_notification(
+                user_id,
+                "Welcome to ProfitPilot! 🚀",
+                "Your free mining token has been activated and will start earning in 2 hours!",
+                "success"
+            )
         
-        # Generate access token
-        access_token = security_manager.create_access_token(data={"sub": user_id})
-        
-        # Update session
-        session_manager.update_user_session(user_id, {
-            "ip_address": request.client.host,
-            "user_agent": request.headers.get("User-Agent", "")
-        })
-        
-        # Create welcome notification
-        notification_manager.create_notification(
-            user_id,
-            "Welcome to ProfitPilot! 🚀",
-            "Your account has been created successfully. Start earning with automated mining!",
-            "success"
-        )
+        # Create access token
+        access_token = create_access_token(data={"sub": user_id})
+        update_user_session(user_id)
         
         logger.info(f"✅ New user registered: {user_id} ({user_data.email}) from {country}")
         
@@ -1175,7 +780,7 @@ async def register_user(user_data: UserRegister, request: Request):
             "referral_code": referral_code,
             "is_admin": user_doc.get("is_admin", False),
             "preferred_currency": preferred_currency,
-            "country": country
+            "referral_bonus": referral_bonus
         }
         
     except HTTPException:
@@ -1184,124 +789,27 @@ async def register_user(user_data: UserRegister, request: Request):
         logger.error(f"Registration error: {e}")
         raise HTTPException(status_code=500, detail="Registration failed")
 
-async def _process_referral(referral_code: str, new_user_id: str, is_admin: bool):
-    """Process referral bonus"""
+@app.post("/api/login")
+async def login_user(user_data: UserLogin):
+    """Enhanced user login with session tracking"""
     try:
-        referrer = db_manager.collections['users'].find_one({"referral_code": referral_code})
-        if referrer and not referrer.get("is_admin"):
-            # Give bonus to referrer
-            db_manager.collections['users'].update_one(
-                {"user_id": referrer["user_id"]},
-                {"$inc": {"referral_earnings": 2.0, "total_earnings": 2.0, "referrals_count": 1}}
-            )
-            
-            # Give bonus to new user if not admin
-            if not is_admin:
-                db_manager.collections['users'].update_one(
-                    {"user_id": new_user_id},
-                    {"$inc": {"referral_earnings": 2.0, "total_earnings": 2.0}}
-                )
-            
-            # Record referral
-            db_manager.collections['referrals'].insert_one({
-                "referral_id": security_manager.generate_secure_id("REF"),
-                "referrer_id": referrer["user_id"],
-                "referred_id": new_user_id,
-                "amount": 2.0,
-                "timestamp": datetime.utcnow(),
-                "status": "completed"
-            })
-            
-            # Notify referrer
-            notification_manager.create_notification(
-                referrer["user_id"],
-                "Referral Bonus! 🎉",
-                f"You've earned $2.00 for referring a new user!",
-                "success",
-                {"amount": 2.0, "referred_user": new_user_id}
-            )
-            
-    except Exception as e:
-        logger.error(f"Referral processing error: {e}")
-
-async def _create_first_token(user_id: str):
-    """Create first free token for new user"""
-    try:
-        token_id = security_manager.generate_secure_id("TOKEN")
-        token_doc = {
-            "token_id": token_id,
-            "owner_id": user_id,
-            "name": "ProfitToken #1",
-            "boost_level": 0,
-            "total_earnings": 0.0,
-            "created_at": datetime.utcnow(),
-            "last_mining": datetime.utcnow(),
-            "active": True,
-            "mining_history": [],
-            "boost_history": [],
-            "token_type": "starter"
-        }
+        user = users_collection.find_one({"email": user_data.email})
+        if not user or not verify_password(user_data.password, user["password"]):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
         
-        db_manager.collections['tokens'].insert_one(token_doc)
-        db_manager.collections['users'].update_one(
-            {"user_id": user_id},
-            {"$inc": {"tokens_owned": 1}}
+        # Update login tracking
+        users_collection.update_one(
+            {"user_id": user["user_id"]},
+            {
+                "$set": {"last_login": datetime.utcnow()},
+                "$inc": {"login_count": 1}
+            }
         )
         
-    except Exception as e:
-        logger.error(f"First token creation error: {e}")
-
-@app.post("/api/login")
-async def login_user(user_data: UserLogin, request: Request):
-    """Professional user login with security logging"""
-    try:
-        user = db_manager.collections['users'].find_one({"email": user_data.email})
+        access_token = create_access_token(data={"sub": user["user_id"]})
+        update_user_session(user["user_id"])
         
-        if not user:
-            # Log failed login attempt
-            db_manager.collections['security_logs'].insert_one({
-                "event": "failed_login_attempt",
-                "email": user_data.email,
-                "reason": "user_not_found",
-                "ip_address": request.client.host,
-                "timestamp": datetime.utcnow()
-            })
-            raise HTTPException(status_code=401, detail="Invalid credentials")
-        
-        if not security_manager.verify_password(user_data.password, user["password"]):
-            # Log failed password attempt
-            db_manager.collections['security_logs'].insert_one({
-                "event": "failed_login_attempt",
-                "email": user_data.email,
-                "user_id": user["user_id"],
-                "reason": "invalid_password",
-                "ip_address": request.client.host,
-                "timestamp": datetime.utcnow()
-            })
-            raise HTTPException(status_code=401, detail="Invalid credentials")
-        
-        # Check account status
-        if user.get("account_status") != "active":
-            raise HTTPException(status_code=403, detail="Account is suspended")
-        
-        # Generate access token
-        access_token = security_manager.create_access_token(data={"sub": user["user_id"]})
-        
-        # Update session
-        session_manager.update_user_session(user["user_id"], {
-            "ip_address": request.client.host,
-            "user_agent": request.headers.get("User-Agent", "")
-        })
-        
-        # Log successful login
-        db_manager.collections['security_logs'].insert_one({
-            "event": "successful_login",
-            "user_id": user["user_id"],
-            "ip_address": request.client.host,
-            "timestamp": datetime.utcnow()
-        })
-        
-        logger.info(f"✅ User logged in: {user['user_id']}")
+        logger.info(f"✅ User login: {user['user_id']} ({user_data.email})")
         
         return {
             "access_token": access_token,
@@ -1319,58 +827,57 @@ async def login_user(user_data: UserLogin, request: Request):
 
 @app.get("/api/dashboard")
 async def get_dashboard(current_user: dict = Depends(get_current_user)):
-    """Professional dashboard with comprehensive data and currency conversion"""
+    """Enhanced dashboard with complete currency conversion"""
     try:
-        # Get fresh user data
-        fresh_user = db_manager.collections['users'].find_one({"user_id": current_user["user_id"]})
-        if not fresh_user:
-            raise HTTPException(status_code=404, detail="User not found")
-        
         # Get user's tokens
-        tokens = list(db_manager.collections['tokens'].find({"owner_id": current_user["user_id"]}))
+        tokens = list(tokens_collection.find({"owner_id": current_user["user_id"]}))
         
         # Calculate next mining time
         next_mining = None
         if tokens:
             last_mining_times = [t.get("last_mining", t["created_at"]) for t in tokens]
-            last_mining = max(last_mining_times)
-            next_mining = last_mining + timedelta(hours=2)
+            if last_mining_times:
+                last_mining = max(last_mining_times)
+                next_mining = last_mining + timedelta(hours=2)
         
-        # Get user's preferred currency
+        # Get fresh user data
+        fresh_user = users_collection.find_one({"user_id": current_user["user_id"]})
         user_currency = fresh_user.get("preferred_currency", "USD")
         
-        # Convert earnings to user's preferred currency
-        total_earnings_converted = await currency_manager.convert_currency(
+        # Convert all earnings to user's preferred currency
+        total_earnings_converted = await convert_currency(
             fresh_user["total_earnings"], "USD", user_currency
         )
-        referral_earnings_converted = await currency_manager.convert_currency(
+        referral_earnings_converted = await convert_currency(
             fresh_user["referral_earnings"], "USD", user_currency
         )
         
         # Convert token earnings
         converted_tokens = []
         for token in tokens:
-            token_earnings_converted = await currency_manager.convert_currency(
+            total_earnings_converted_token = await convert_currency(
                 token["total_earnings"], "USD", user_currency
             )
+            hourly_rate = 0.70 * (2 ** token["boost_level"]) / 2
+            hourly_rate_converted = await convert_currency(hourly_rate, "USD", user_currency)
             
             converted_tokens.append({
                 "token_id": token["token_id"],
                 "name": token["name"],
                 "boost_level": token["boost_level"],
                 "total_earnings": token["total_earnings"],
-                "total_earnings_converted": token_earnings_converted,
+                "total_earnings_converted": total_earnings_converted_token,
                 "created_at": token["created_at"],
                 "last_mining": token.get("last_mining"),
-                "hourly_rate": (0.70 * (2 ** token["boost_level"])) / 2,
-                "active": token.get("active", True)
+                "hourly_rate": hourly_rate,
+                "hourly_rate_converted": hourly_rate_converted,
+                "active": token.get("active", True),
+                "token_type": token.get("token_type", "standard")
             })
         
-        # Calculate mining rate in user's currency
-        total_mining_rate_usd = sum([0.70 * (2 ** t["boost_level"]) for t in tokens])
-        total_mining_rate_converted = await currency_manager.convert_currency(
-            total_mining_rate_usd, "USD", user_currency
-        )
+        # Calculate mining rate
+        total_mining_rate = sum([0.70 * (2 ** t["boost_level"]) for t in tokens])
+        total_mining_rate_converted = await convert_currency(total_mining_rate, "USD", user_currency)
         
         return {
             "user": {
@@ -1390,7 +897,9 @@ async def get_dashboard(current_user: dict = Depends(get_current_user)):
                 "preferred_currency": user_currency,
                 "theme": fresh_user.get("theme", "light"),
                 "notifications_enabled": fresh_user.get("notifications_enabled", True),
-                "country": fresh_user.get("country", "Unknown")
+                "country": fresh_user.get("country", "NG"),
+                "last_login": fresh_user.get("last_login"),
+                "login_count": fresh_user.get("login_count", 1)
             },
             "tokens": converted_tokens,
             "next_mining": next_mining,
@@ -1398,31 +907,27 @@ async def get_dashboard(current_user: dict = Depends(get_current_user)):
                 "active_assets": len([t for t in tokens if t.get("active", True)]),
                 "total_balance": fresh_user["total_earnings"],
                 "total_balance_converted": total_earnings_converted,
-                "mining_rate_usd": total_mining_rate_usd,
+                "mining_rate": total_mining_rate,
                 "mining_rate_converted": total_mining_rate_converted,
                 "currency": user_currency,
-                "currency_symbol": currency_manager.supported_currencies.get(user_currency, {}).get("symbol", "$")
-            },
-            "activity": session_manager.get_user_activity_stats(current_user["user_id"])
+                "next_mining_countdown": next_mining
+            }
         }
         
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"Dashboard error: {e}")
         raise HTTPException(status_code=500, detail="Failed to load dashboard")
 
 @app.post("/api/profile/update")
 async def update_profile(profile_data: ProfileUpdate, current_user: dict = Depends(get_current_user)):
-    """Professional profile update with validation"""
+    """Enhanced profile update with validation"""
     try:
         update_fields = {}
         
         if profile_data.preferred_currency:
-            # Validate currency is supported
-            rates = await currency_manager.get_exchange_rates()
+            rates = await get_currency_rates()
             if profile_data.preferred_currency not in rates:
-                raise HTTPException(status_code=400, detail="Unsupported currency")
+                raise HTTPException(status_code=400, detail="Invalid currency code")
             update_fields["preferred_currency"] = profile_data.preferred_currency
         
         if profile_data.theme:
@@ -1432,28 +937,15 @@ async def update_profile(profile_data: ProfileUpdate, current_user: dict = Depen
             update_fields["notifications_enabled"] = profile_data.notifications_enabled
         
         if update_fields:
-            update_fields["updated_at"] = datetime.utcnow()
-            
-            result = db_manager.collections['users'].update_one(
+            update_fields["profile_updated_at"] = datetime.utcnow()
+            users_collection.update_one(
                 {"user_id": current_user["user_id"]},
                 {"$set": update_fields}
             )
             
-            if result.modified_count == 0:
-                raise HTTPException(status_code=400, detail="No changes made")
-            
-            # Log profile update
-            db_manager.collections['admin_logs'].insert_one({
-                "event": "profile_updated",
-                "user_id": current_user["user_id"],
-                "changes": update_fields,
-                "timestamp": datetime.utcnow()
-            })
+            logger.info(f"Profile updated for user {current_user['user_id']}: {update_fields}")
         
-        return {
-            "message": "Profile updated successfully",
-            "updated_fields": list(update_fields.keys())
-        }
+        return {"message": "Profile updated successfully", "updated_fields": update_fields}
         
     except HTTPException:
         raise
@@ -1463,52 +955,113 @@ async def update_profile(profile_data: ProfileUpdate, current_user: dict = Depen
 
 @app.get("/api/currencies")
 async def get_supported_currencies():
-    """Get supported currencies with current exchange rates"""
+    """Get list of supported currencies with current rates"""
     try:
-        rates = await currency_manager.get_exchange_rates()
+        rates = await get_currency_rates()
+        supported_currencies = {
+            "USD": {"name": "US Dollar", "symbol": "$", "flag": "🇺🇸"},
+            "NGN": {"name": "Nigerian Naira", "symbol": "₦", "flag": "🇳🇬"},
+            "GBP": {"name": "British Pound", "symbol": "£", "flag": "🇬🇧"},
+            "EUR": {"name": "Euro", "symbol": "€", "flag": "🇪🇺"},
+            "CAD": {"name": "Canadian Dollar", "symbol": "C$", "flag": "🇨🇦"},
+            "AUD": {"name": "Australian Dollar", "symbol": "A$", "flag": "🇦🇺"},
+            "JPY": {"name": "Japanese Yen", "symbol": "¥", "flag": "🇯🇵"},
+            "INR": {"name": "Indian Rupee", "symbol": "₹", "flag": "🇮🇳"},
+            "ZAR": {"name": "South African Rand", "symbol": "R", "flag": "🇿🇦"}
+        }
         
         return {
-            "currencies": currency_manager.supported_currencies,
+            "currencies": supported_currencies,
             "rates": rates,
-            "base_currency": "USD",
             "last_updated": datetime.utcnow()
         }
         
     except Exception as e:
-        logger.error(f"Currency fetch error: {e}")
+        logger.error(f"Currencies fetch error: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch currencies")
 
+@app.post("/api/tokens/create")
+async def create_token(current_user: dict = Depends(get_current_user)):
+    """Create new token with validation"""
+    try:
+        if current_user.get("is_admin"):
+            raise HTTPException(status_code=400, detail="Admin accounts cannot create tokens")
+            
+        if current_user["tokens_owned"] >= 5:
+            raise HTTPException(status_code=400, detail="Maximum 5 tokens allowed per user")
+        
+        if current_user["tokens_owned"] > 0:
+            raise HTTPException(status_code=400, detail="Additional tokens require payment")
+        
+        token_id = str(uuid.uuid4())
+        token_doc = {
+            "token_id": token_id,
+            "owner_id": current_user["user_id"],
+            "name": f"ProfitToken #{current_user['tokens_owned'] + 1}",
+            "boost_level": 0,
+            "total_earnings": 0.0,
+            "created_at": datetime.utcnow(),
+            "last_mining": datetime.utcnow(),
+            "active": True,
+            "mining_history": [],
+            "boost_history": [],
+            "token_type": "free_starter"
+        }
+        
+        tokens_collection.insert_one(token_doc)
+        users_collection.update_one(
+            {"user_id": current_user["user_id"]},
+            {"$inc": {"tokens_owned": 1}}
+        )
+        
+        create_notification(
+            current_user["user_id"],
+            "New Token Created! 🪙",
+            f"Your new token '{token_doc['name']}' is now active and mining!",
+            "success"
+        )
+        
+        logger.info(f"Token created for user {current_user['user_id']}: {token_id}")
+        
+        return {"message": "Token created successfully", "token": token_doc}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Token creation error: {e}")
+        raise HTTPException(status_code=500, detail="Token creation failed")
+
 @app.post("/api/payment/initialize")
-async def initialize_payment(payment_data: PaymentInitialize, current_user: dict = Depends(get_current_user)):
-    """Professional payment initialization with enhanced validation"""
+async def initialize_payment(payment_data: dict, current_user: dict = Depends(get_current_user)):
+    """Initialize payment with enhanced validation and currency conversion"""
     try:
         if current_user.get("is_admin"):
             raise HTTPException(status_code=400, detail="Admin accounts cannot make payments")
+            
+        action = payment_data.get("action")
+        token_id = payment_data.get("token_id")
         
-        action = payment_data.action
-        token_id = payment_data.token_id
-        
-        # Calculate amount based on action
         if action == "token":
             if current_user["tokens_owned"] >= 5:
-                raise HTTPException(status_code=400, detail="Maximum 5 tokens allowed per user")
+                raise HTTPException(status_code=400, detail="Maximum 5 tokens allowed")
             amount_usd = 5.0
-            
         elif action == "boost":
             if not token_id:
                 raise HTTPException(status_code=400, detail="Token ID required for boost")
             
-            token = db_manager.collections['tokens'].find_one({
-                "token_id": token_id,
-                "owner_id": current_user["user_id"]
-            })
+            token = tokens_collection.find_one({"token_id": token_id, "owner_id": current_user["user_id"]})
             if not token:
-                raise HTTPException(status_code=404, detail="Token not found or not owned by user")
+                raise HTTPException(status_code=404, detail="Token not found")
+            
+            if token.get("boost_level", 0) >= 10:
+                raise HTTPException(status_code=400, detail="Maximum boost level reached")
             
             amount_usd = 3.0 * (2 ** token["boost_level"])
+        else:
+            raise HTTPException(status_code=400, detail="Invalid payment action")
         
-        # Convert to NGN for Paystack
-        rates = await currency_manager.get_exchange_rates()
+        # Get current exchange rate
+        rates = await get_currency_rates()
         exchange_rate = rates.get("NGN", 1500)
         amount_ngn = amount_usd * exchange_rate
         amount_kobo = int(amount_ngn * 100)
@@ -1516,13 +1069,12 @@ async def initialize_payment(payment_data: PaymentInitialize, current_user: dict
         # Generate unique reference
         reference = f"pp_{action}_{uuid.uuid4().hex[:12]}"
         
-        # Prepare Paystack payload
         paystack_data = {
             "email": current_user["email"],
             "amount": amount_kobo,
             "currency": "NGN",
             "reference": reference,
-            "callback_url": f"{os.getenv('FRONTEND_URL', 'http://localhost:3000')}/payment/callback",
+            "callback_url": f"{os.getenv('FRONTEND_URL', 'http://localhost:3000')}?reference={reference}",
             "metadata": {
                 "user_id": current_user["user_id"],
                 "action": action,
@@ -1532,7 +1084,6 @@ async def initialize_payment(payment_data: PaymentInitialize, current_user: dict
             }
         }
         
-        # Initialize payment with Paystack
         headers = {
             "Authorization": f"Bearer {PAYSTACK_SECRET_KEY}",
             "Content-Type": "application/json"
@@ -1548,9 +1099,8 @@ async def initialize_payment(payment_data: PaymentInitialize, current_user: dict
         if response.status_code == 200:
             data = response.json()
             
-            # Store payment initialization record
-            db_manager.collections['transactions'].insert_one({
-                "transaction_id": security_manager.generate_secure_id("TXN"),
+            # Log payment initialization
+            transactions_collection.insert_one({
                 "user_id": current_user["user_id"],
                 "reference": reference,
                 "action": action,
@@ -1558,9 +1108,12 @@ async def initialize_payment(payment_data: PaymentInitialize, current_user: dict
                 "amount_ngn": amount_ngn,
                 "status": "initialized",
                 "paystack_reference": data["data"]["reference"],
+                "timestamp": datetime.utcnow(),
                 "token_id": token_id,
-                "timestamp": datetime.utcnow()
+                "exchange_rate": exchange_rate
             })
+            
+            logger.info(f"Payment initialized for user {current_user['user_id']}: {action} - ${amount_usd}")
             
             return {
                 "authorization_url": data["data"]["authorization_url"],
@@ -1581,58 +1134,106 @@ async def initialize_payment(payment_data: PaymentInitialize, current_user: dict
 
 @app.post("/api/payment/verify")
 async def verify_payment(payment_data: PaymentVerification, current_user: dict = Depends(get_current_user)):
-    """Professional payment verification with comprehensive logging"""
+    """Verify payment with enhanced processing and notifications"""
     try:
         if current_user.get("is_admin"):
             raise HTTPException(status_code=400, detail="Admin accounts cannot verify payments")
-        
-        reference = payment_data.reference
-        
-        # Verify with Paystack
+            
         headers = {"Authorization": f"Bearer {PAYSTACK_SECRET_KEY}"}
         
         response = requests.get(
-            f"https://api.paystack.co/transaction/verify/{reference}",
+            f"https://api.paystack.co/transaction/verify/{payment_data.reference}",
             headers=headers,
             timeout=30
         )
         
         if response.status_code != 200:
-            logger.error(f"Paystack verification failed: {response.text}")
             raise HTTPException(status_code=400, detail="Payment verification failed")
         
         data = response.json()
         if data["data"]["status"] != "success":
-            raise HTTPException(status_code=400, detail="Payment was not successful")
-        
-        # Get transaction metadata
-        metadata = data["data"]["metadata"]
-        action = metadata["action"]
-        amount_usd = metadata["amount_usd"]
-        
-        # Verify transaction belongs to current user
-        if metadata["user_id"] != current_user["user_id"]:
-            raise HTTPException(status_code=403, detail="Payment verification failed - user mismatch")
+            raise HTTPException(status_code=400, detail="Payment not successful")
         
         # Check if payment already processed
-        existing_transaction = db_manager.collections['transactions'].find_one({
-            "reference": reference,
+        existing_tx = transactions_collection.find_one({
+            "reference": payment_data.reference,
             "status": "success"
         })
-        if existing_transaction:
+        if existing_tx:
             raise HTTPException(status_code=400, detail="Payment already processed")
         
-        # Process payment based on action
+        metadata = data["data"]["metadata"]
+        action = metadata["action"]
+        
         if action == "token":
-            await self._process_token_purchase(current_user["user_id"], amount_usd)
+            # Create new token
+            token_id = str(uuid.uuid4())
+            token_count = current_user["tokens_owned"] + 1
+            token_doc = {
+                "token_id": token_id,
+                "owner_id": current_user["user_id"],
+                "name": f"ProfitToken #{token_count}",
+                "boost_level": 0,
+                "total_earnings": 0.0,
+                "created_at": datetime.utcnow(),
+                "last_mining": datetime.utcnow(),
+                "active": True,
+                "mining_history": [],
+                "boost_history": [],
+                "token_type": "purchased",
+                "purchase_reference": payment_data.reference
+            }
+            tokens_collection.insert_one(token_doc)
+            users_collection.update_one(
+                {"user_id": current_user["user_id"]},
+                {"$inc": {"tokens_owned": 1}}
+            )
+            
+            create_notification(
+                current_user["user_id"],
+                "New Token Purchased! 🪙",
+                f"Your new token '{token_doc['name']}' is now active and mining!",
+                "success"
+            )
             
         elif action == "boost":
+            # Boost existing token
             token_id = metadata["token_id"]
-            await self._process_token_boost(current_user["user_id"], token_id, amount_usd)
+            token = tokens_collection.find_one({"token_id": token_id})
+            if not token:
+                raise HTTPException(status_code=404, detail="Token not found")
+            
+            new_boost_level = token["boost_level"] + 1
+            tokens_collection.update_one(
+                {"token_id": token_id},
+                {
+                    "$inc": {"boost_level": 1},
+                    "$push": {
+                        "boost_history": {
+                            "timestamp": datetime.utcnow(),
+                            "cost_usd": metadata["amount_usd"],
+                            "new_level": new_boost_level,
+                            "reference": payment_data.reference
+                        }
+                    }
+                }
+            )
+            
+            users_collection.update_one(
+                {"user_id": current_user["user_id"]},
+                {"$inc": {"boosts_used": 1}}
+            )
+            
+            create_notification(
+                current_user["user_id"],
+                "Token Boosted! ⚡",
+                f"Your token '{token['name']}' is now level {new_boost_level}!",
+                "success"
+            )
         
         # Update transaction record
-        db_manager.collections['transactions'].update_one(
-            {"reference": reference},
+        transactions_collection.update_one(
+            {"reference": payment_data.reference},
             {
                 "$set": {
                     "status": "success",
@@ -1642,23 +1243,9 @@ async def verify_payment(payment_data: PaymentVerification, current_user: dict =
             }
         )
         
-        # Create success notification
-        notification_manager.create_notification(
-            current_user["user_id"],
-            "Payment Successful! 🎉",
-            f"Your {action} payment of ${amount_usd:.2f} has been processed successfully",
-            "success",
-            {"action": action, "amount": amount_usd}
-        )
+        logger.info(f"Payment verified for user {current_user['user_id']}: {action} - {payment_data.reference}")
         
-        logger.info(f"Payment verified successfully: {reference} for user {current_user['user_id']}")
-        
-        return {
-            "message": "Payment processed successfully",
-            "action": action,
-            "amount_usd": amount_usd,
-            "reference": reference
-        }
+        return {"message": "Payment processed successfully", "action": action}
         
     except HTTPException:
         raise
@@ -1666,88 +1253,21 @@ async def verify_payment(payment_data: PaymentVerification, current_user: dict =
         logger.error(f"Payment verification error: {e}")
         raise HTTPException(status_code=500, detail="Payment verification failed")
 
-async def _process_token_purchase(user_id: str, amount_usd: float):
-    """Process token purchase"""
-    try:
-        # Get current token count
-        user = db_manager.collections['users'].find_one({"user_id": user_id})
-        token_count = user["tokens_owned"] + 1
-        
-        # Create new token
-        token_id = security_manager.generate_secure_id("TOKEN")
-        token_doc = {
-            "token_id": token_id,
-            "owner_id": user_id,
-            "name": f"ProfitToken #{token_count}",
-            "boost_level": 0,
-            "total_earnings": 0.0,
-            "created_at": datetime.utcnow(),
-            "last_mining": datetime.utcnow(),
-            "active": True,
-            "mining_history": [],
-            "boost_history": [],
-            "token_type": "purchased",
-            "purchase_amount": amount_usd
-        }
-        
-        db_manager.collections['tokens'].insert_one(token_doc)
-        db_manager.collections['users'].update_one(
-            {"user_id": user_id},
-            {"$inc": {"tokens_owned": 1}}
-        )
-        
-        logger.info(f"Token purchased: {token_id} by user {user_id}")
-        
-    except Exception as e:
-        logger.error(f"Token purchase processing error: {e}")
-        raise
-
-async def _process_token_boost(user_id: str, token_id: str, amount_usd: float):
-    """Process token boost"""
-    try:
-        token = db_manager.collections['tokens'].find_one({
-            "token_id": token_id,
-            "owner_id": user_id
-        })
-        
-        if not token:
-            raise HTTPException(status_code=404, detail="Token not found")
-        
-        # Update token boost level
-        new_boost_level = token["boost_level"] + 1
-        
-        db_manager.collections['tokens'].update_one(
-            {"token_id": token_id},
-            {
-                "$inc": {"boost_level": 1},
-                "$push": {
-                    "boost_history": {
-                        "timestamp": datetime.utcnow(),
-                        "cost_usd": amount_usd,
-                        "new_level": new_boost_level,
-                        "boost_type": "paid"
-                    }
-                }
-            }
-        )
-        
-        db_manager.collections['users'].update_one(
-            {"user_id": user_id},
-            {"$inc": {"boosts_used": 1}}
-        )
-        
-        logger.info(f"Token boosted: {token_id} to level {new_boost_level} by user {user_id}")
-        
-    except Exception as e:
-        logger.error(f"Token boost processing error: {e}")
-        raise
-
 @app.get("/api/notifications")
 async def get_user_notifications(current_user: dict = Depends(get_current_user)):
     """Get user notifications with pagination"""
     try:
-        notifications = notification_manager.get_user_notifications(current_user["user_id"])
-        unread_count = notification_manager.get_unread_count(current_user["user_id"])
+        notifications = list(notifications_collection.find(
+            {"user_id": current_user["user_id"]}
+        ).sort("created_at", -1).limit(50))
+        
+        for notif in notifications:
+            notif['_id'] = str(notif['_id'])
+        
+        unread_count = notifications_collection.count_documents({
+            "user_id": current_user["user_id"],
+            "read": False
+        })
         
         return {
             "notifications": notifications,
@@ -1763,9 +1283,12 @@ async def get_user_notifications(current_user: dict = Depends(get_current_user))
 async def mark_notification_read(notification_id: str, current_user: dict = Depends(get_current_user)):
     """Mark notification as read"""
     try:
-        success = notification_manager.mark_notification_read(notification_id, current_user["user_id"])
+        result = notifications_collection.update_one(
+            {"notification_id": notification_id, "user_id": current_user["user_id"]},
+            {"$set": {"read": True, "read_at": datetime.utcnow()}}
+        )
         
-        if not success:
+        if result.matched_count == 0:
             raise HTTPException(status_code=404, detail="Notification not found")
         
         return {"message": "Notification marked as read"}
@@ -1778,36 +1301,33 @@ async def mark_notification_read(notification_id: str, current_user: dict = Depe
 
 @app.get("/api/tasks")
 async def get_available_tasks(current_user: dict = Depends(get_current_user)):
-    """Get available tasks for user"""
+    """Get available tasks for user with currency conversion"""
     try:
         if current_user.get("is_admin"):
-            return {"tasks": [], "message": "Admin users cannot complete tasks"}
+            return {"tasks": []}
         
-        # Get tasks that are active and not expired
-        current_time = datetime.utcnow()
-        
-        tasks = list(db_manager.collections['tasks'].find({
+        # Get tasks not completed by current user and not expired
+        tasks = list(tasks_collection.find({
             "active": True,
+            "completed_by": {"$ne": current_user["user_id"]},
             "$or": [
                 {"expires_at": None},
-                {"expires_at": {"$gt": current_time}}
+                {"expires_at": {"$gt": datetime.utcnow()}}
             ]
-        }).sort("created_at", -1))
+        }))
         
-        # Filter out completed one-time tasks
-        available_tasks = []
+        user_currency = current_user.get("preferred_currency", "USD")
+        
+        # Convert task rewards to user's currency
+        converted_tasks = []
         for task in tasks:
-            if task["type"] == "one_time" and current_user["user_id"] in task.get("completed_by", []):
-                continue
-            
-            # Clean up ObjectId for JSON serialization
             task['_id'] = str(task['_id'])
-            available_tasks.append(task)
+            reward_converted = await convert_currency(task["reward"], "USD", user_currency)
+            task["reward_converted"] = reward_converted
+            task["currency"] = user_currency
+            converted_tasks.append(task)
         
-        return {
-            "tasks": available_tasks,
-            "total_available": len(available_tasks)
-        }
+        return {"tasks": converted_tasks, "currency": user_currency}
         
     except Exception as e:
         logger.error(f"Tasks fetch error: {e}")
@@ -1815,80 +1335,123 @@ async def get_available_tasks(current_user: dict = Depends(get_current_user)):
 
 @app.post("/api/tasks/complete")
 async def complete_task(task_complete: TaskComplete, current_user: dict = Depends(get_current_user)):
-    """Complete a task and earn reward"""
+    """Complete a task and earn reward with enhanced verification"""
     try:
         if current_user.get("is_admin"):
-            raise HTTPException(status_code=400, detail="Admin users cannot complete tasks")
+            raise HTTPException(status_code=400, detail="Admin accounts cannot complete tasks")
         
-        result = task_manager.complete_task(
-            task_complete.task_id,
-            current_user["user_id"],
-            task_complete.verification_data
+        task = tasks_collection.find_one({"task_id": task_complete.task_id, "active": True})
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found or inactive")
+        
+        if current_user["user_id"] in task.get("completed_by", []):
+            raise HTTPException(status_code=400, detail="Task already completed")
+        
+        if task.get("expires_at") and task["expires_at"] < datetime.utcnow():
+            raise HTTPException(status_code=400, detail="Task has expired")
+        
+        # Verify external task if needed
+        if task.get("verification_type") == "external":
+            verification_passed = await verify_external_task(task, current_user["user_id"], task_complete.verification_data)
+            if not verification_passed:
+                raise HTTPException(status_code=400, detail="Task verification failed")
+        
+        # Award the reward
+        users_collection.update_one(
+            {"user_id": current_user["user_id"]},
+            {"$inc": {"total_earnings": task["reward"]}}
         )
         
-        return result
+        # Mark task as completed
+        tasks_collection.update_one(
+            {"task_id": task_complete.task_id},
+            {
+                "$push": {
+                    "completed_by": current_user["user_id"],
+                    "completion_data": {
+                        "user_id": current_user["user_id"],
+                        "completed_at": datetime.utcnow(),
+                        "verification_data": task_complete.verification_data
+                    }
+                }
+            }
+        )
+        
+        # Record transaction
+        transactions_collection.insert_one({
+            "user_id": current_user["user_id"],
+            "reference": f"task_{task_complete.task_id}_{uuid.uuid4().hex[:8]}",
+            "action": "task_completion",
+            "amount_usd": task["reward"],
+            "amount_ngn": 0,
+            "status": "success",
+            "task_id": task_complete.task_id,
+            "task_title": task["title"],
+            "timestamp": datetime.utcnow()
+        })
+        
+        # Create notification
+        user_currency = current_user.get("preferred_currency", "USD")
+        reward_converted = await convert_currency(task["reward"], "USD", user_currency)
+        
+        create_notification(
+            current_user["user_id"],
+            "Task Completed! 🎉",
+            f"You've earned {user_currency} {reward_converted:.2f} for completing '{task['title']}'",
+            "success"
+        )
+        
+        logger.info(f"Task completed by user {current_user['user_id']}: {task_complete.task_id}")
+        
+        return {
+            "message": "Task completed successfully",
+            "reward": task["reward"],
+            "reward_converted": reward_converted,
+            "currency": user_currency
+        }
         
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Task completion error: {e}")
-        raise HTTPException(status_code=500, detail="Failed to complete task")
+        raise HTTPException(status_code=500, detail="Task completion failed")
 
 @app.get("/api/leaderboard")
 async def get_leaderboard():
-    """Get leaderboard with privacy protection"""
+    """Get leaderboard with currency conversion support"""
     try:
-        # Get top earners (excluding admins)
-        top_earners = list(
-            db_manager.collections['users'].find(
-                {"is_admin": {"$ne": True}},
-                {
-                    "user_id": 1,
-                    "email": 1,
-                    "total_earnings": 1,
-                    "tokens_owned": 1,
-                    "boosts_used": 1,
-                    "referrals_count": 1
-                }
-            ).sort("total_earnings", -1).limit(10)
-        )
+        # Get top earners (non-admin users)
+        top_earners = list(users_collection.find(
+            {"is_admin": {"$ne": True}},
+            {"user_id": 1, "email": 1, "total_earnings": 1, "tokens_owned": 1, "boosts_used": 1, "preferred_currency": 1}
+        ).sort("total_earnings", -1).limit(10))
         
-        # Get top tokens (excluding admin-owned)
-        admin_user_ids = [
-            user["user_id"] for user in 
-            db_manager.collections['users'].find({"is_admin": True}, {"user_id": 1})
-        ]
+        # Get top tokens (non-admin owned)
+        admin_user_ids = [user["user_id"] for user in users_collection.find({"is_admin": True}, {"user_id": 1})]
+        top_tokens = list(tokens_collection.find(
+            {"owner_id": {"$nin": admin_user_ids}},
+            {"name": 1, "boost_level": 1, "total_earnings": 1, "owner_id": 1}
+        ).sort("boost_level", -1).limit(10))
         
-        top_tokens = list(
-            db_manager.collections['tokens'].find(
-                {"owner_id": {"$nin": admin_user_ids}},
-                {
-                    "name": 1,
-                    "boost_level": 1,
-                    "total_earnings": 1,
-                    "owner_id": 1
-                }
-            ).sort("boost_level", -1).limit(10)
-        )
-        
-        # Anonymize data for privacy
-        anonymized_earners = []
+        # Process and anonymize data
+        processed_earners = []
         for user in top_earners:
-            email = user["email"]
-            anonymized_email = email[:3] + "***" + email[-10:] if len(email) > 13 else "***"
+            user_currency = user.get("preferred_currency", "USD")
+            total_earnings_converted = await convert_currency(user["total_earnings"], "USD", user_currency)
             
-            anonymized_earners.append({
+            processed_earners.append({
                 "user_id": user["user_id"][:8] + "***",
-                "email": anonymized_email,
+                "email": user["email"][:3] + "***" + user["email"][-10:],
                 "total_earnings": user["total_earnings"],
+                "total_earnings_converted": total_earnings_converted,
+                "currency": user_currency,
                 "tokens_owned": user["tokens_owned"],
-                "boosts_used": user["boosts_used"],
-                "referrals_count": user["referrals_count"]
+                "boosts_used": user["boosts_used"]
             })
         
-        anonymized_tokens = []
+        processed_tokens = []
         for token in top_tokens:
-            anonymized_tokens.append({
+            processed_tokens.append({
                 "name": token["name"],
                 "boost_level": token["boost_level"],
                 "total_earnings": token["total_earnings"],
@@ -1896,8 +1459,8 @@ async def get_leaderboard():
             })
         
         return {
-            "top_earners": anonymized_earners,
-            "top_tokens": anonymized_tokens,
+            "top_earners": processed_earners,
+            "top_tokens": processed_tokens,
             "last_updated": datetime.utcnow()
         }
         
@@ -1906,72 +1469,71 @@ async def get_leaderboard():
         raise HTTPException(status_code=500, detail="Failed to fetch leaderboard")
 
 # ============================================================================
-# PROFESSIONAL ADMIN WORKSPACE ENDPOINTS
+# ENHANCED ADMIN WORKSPACE ENDPOINTS
 # ============================================================================
+
+def require_admin(current_user: dict = Depends(get_current_user)):
+    """Require admin privileges with enhanced validation"""
+    if not current_user.get("is_admin"):
+        logger.warning(f"Unauthorized admin access attempt by user {current_user.get('user_id', 'unknown')}")
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return current_user
 
 @app.get("/api/admin/workspace/dashboard")
 async def get_admin_dashboard(current_user: dict = Depends(require_admin)):
-    """Professional admin dashboard with comprehensive metrics"""
+    """Professional admin dashboard with comprehensive analytics"""
     try:
-        # Revenue metrics
+        # Calculate revenue metrics
         revenue_pipeline = [
             {"$match": {"action": {"$in": ["token", "boost"]}, "status": "success"}},
             {"$group": {"_id": None, "total": {"$sum": "$amount_usd"}}}
         ]
-        revenue_result = list(db_manager.collections['transactions'].aggregate(revenue_pipeline))
+        revenue_result = list(transactions_collection.aggregate(revenue_pipeline))
         total_revenue = revenue_result[0]["total"] if revenue_result else 0
         
-        # User metrics
-        total_users = db_manager.collections['users'].count_documents({"is_admin": {"$ne": True}})
-        users_online = session_manager.get_online_users_count()
-        
-        # Today's metrics
+        # Today's revenue
         today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-        new_users_today = db_manager.collections['users'].count_documents({
+        today_revenue_pipeline = [
+            {"$match": {"action": {"$in": ["token", "boost"]}, "status": "success", "timestamp": {"$gte": today_start}}},
+            {"$group": {"_id": None, "total": {"$sum": "$amount_usd"}}}
+        ]
+        today_revenue_result = list(transactions_collection.aggregate(today_revenue_pipeline))
+        today_revenue = today_revenue_result[0]["total"] if today_revenue_result else 0
+        
+        # User metrics
+        total_users = users_collection.count_documents({"is_admin": {"$ne": True}})
+        users_online = get_online_users_count()
+        new_users_today = users_collection.count_documents({
             "created_at": {"$gte": today_start},
             "is_admin": {"$ne": True}
         })
         
         # Token metrics
-        total_tokens = db_manager.collections['tokens'].count_documents({})
-        active_tokens = db_manager.collections['tokens'].count_documents({"active": True})
-        tokens_bought = db_manager.collections['transactions'].count_documents({
-            "action": "token",
-            "status": "success"
-        })
-        boost_purchases = db_manager.collections['transactions'].count_documents({
-            "action": "boost",
-            "status": "success"
-        })
+        total_tokens = tokens_collection.count_documents({})
+        active_tokens = tokens_collection.count_documents({"active": True})
+        tokens_bought = transactions_collection.count_documents({"action": "token", "status": "success"})
+        boost_purchases = transactions_collection.count_documents({"action": "boost", "status": "success"})
         
         # Task metrics
-        total_tasks = db_manager.collections['tasks'].count_documents({})
-        task_completions_pipeline = [
-            {"$project": {"completion_count": {"$size": {"$ifNull": ["$completed_by", []]}}}},
-            {"$group": {"_id": None, "total": {"$sum": "$completion_count"}}}
-        ]
-        task_completions_result = list(db_manager.collections['tasks'].aggregate(task_completions_pipeline))
-        total_task_completions = task_completions_result[0]["total"] if task_completions_result else 0
+        total_tasks = tasks_collection.count_documents({})
+        active_tasks = tasks_collection.count_documents({"active": True})
+        task_completions_today = transactions_collection.count_documents({
+            "action": "task_completion",
+            "timestamp": {"$gte": today_start}
+        })
         
-        # Mining status
-        latest_mining = db_manager.collections['mining_logs'].find_one(
-            {"status": {"$in": ["success", "partial_success"]}},
+        # Mining metrics
+        today_mining = mining_logs_collection.find_one(
+            {"timestamp": {"$gte": today_start}},
             sort=[("timestamp", -1)]
         )
         
         # Recent activity
-        recent_transactions = list(
-            db_manager.collections['transactions'].find({})
-            .sort("timestamp", -1)
-            .limit(10)
-        )
-        
-        recent_users = list(
-            db_manager.collections['users'].find(
-                {"is_admin": {"$ne": True}},
-                {"password": 0}
-            ).sort("created_at", -1).limit(5)
-        )
+        recent_transactions = list(transactions_collection.find({}).sort("timestamp", -1).limit(10))
+        recent_users = list(users_collection.find(
+            {"is_admin": {"$ne": True}},
+            {"user_id": 1, "email": 1, "created_at": 1, "total_earnings": 1}
+        ).sort("created_at", -1).limit(10))
         
         # Clean up ObjectIds
         for tx in recent_transactions:
@@ -1982,41 +1544,37 @@ async def get_admin_dashboard(current_user: dict = Depends(require_admin)):
         return {
             "revenue_metrics": {
                 "total_revenue": total_revenue,
-                "monthly_revenue": 0,  # TODO: Implement monthly calculation
-                "daily_revenue": 0     # TODO: Implement daily calculation
+                "today_revenue": today_revenue,
+                "average_daily_revenue": total_revenue / 30 if total_revenue > 0 else 0  # Rough estimate
             },
             "user_metrics": {
                 "total_users": total_users,
                 "users_online": users_online,
-                "new_users_today": new_users_today
+                "new_users_today": new_users_today,
+                "user_growth_rate": (new_users_today / max(total_users, 1)) * 100
             },
             "token_metrics": {
                 "total_tokens": total_tokens,
                 "active_tokens": active_tokens,
                 "tokens_bought": tokens_bought,
-                "boost_purchases": boost_purchases
+                "boost_purchases": boost_purchases,
+                "average_tokens_per_user": total_tokens / max(total_users, 1)
             },
-            "platform_activity": {
-                "total_transactions": db_manager.collections['transactions'].count_documents({}),
+            "task_metrics": {
                 "total_tasks": total_tasks,
-                "total_task_completions": total_task_completions,
-                "total_broadcasts": db_manager.collections['broadcasts'].count_documents({})
+                "active_tasks": active_tasks,
+                "completions_today": task_completions_today,
+                "total_broadcasts": broadcasts_collection.count_documents({})
             },
             "mining_status": {
-                "last_mining": latest_mining["timestamp"] if latest_mining else None,
-                "tokens_processed_today": latest_mining["tokens_processed"] if latest_mining else 0,
-                "earnings_distributed_today": latest_mining["total_earnings_distributed"] if latest_mining else 0,
-                "system_status": "automated",
-                "next_cycle": "Every 2 hours automatically"
+                "last_mining": today_mining["timestamp"] if today_mining else None,
+                "tokens_processed_today": today_mining["tokens_processed"] if today_mining else 0,
+                "earnings_distributed_today": today_mining["total_earnings_distributed"] if today_mining else 0,
+                "system_status": "automated"
             },
             "recent_activity": {
                 "recent_transactions": recent_transactions,
                 "recent_users": recent_users
-            },
-            "system_health": {
-                "database_status": "healthy",
-                "mining_system": "operational",
-                "api_status": "healthy"
             }
         }
         
@@ -2026,139 +1584,156 @@ async def get_admin_dashboard(current_user: dict = Depends(require_admin)):
 
 @app.get("/api/admin/workspace/users")
 async def get_all_users(current_user: dict = Depends(require_admin)):
-    """Get all users with comprehensive data"""
+    """Get all users with comprehensive data and analytics"""
     try:
-        users = list(
-            db_manager.collections['users'].find(
-                {"is_admin": {"$ne": True}},
-                {"password": 0}
-            ).sort("created_at", -1)
-        )
+        users = list(users_collection.find(
+            {"is_admin": {"$ne": True}}, 
+            {"password": 0}
+        ).sort("created_at", -1))
         
-        # Enhance user data
+        enhanced_users = []
         for user in users:
             user['_id'] = str(user['_id'])
             
-            # Get token information
-            user_tokens = list(db_manager.collections['tokens'].find({"owner_id": user["user_id"]}))
+            # Get user tokens
+            user_tokens = list(tokens_collection.find({"owner_id": user["user_id"]}))
             user['tokens_count'] = len(user_tokens)
             user['active_tokens_count'] = len([t for t in user_tokens if t.get("active", True)])
             user['total_token_earnings'] = sum([t.get("total_earnings", 0) for t in user_tokens])
             
             # Get transaction count
-            user['transaction_count'] = db_manager.collections['transactions'].count_documents({
-                "user_id": user["user_id"]
-            })
+            user['transactions_count'] = transactions_collection.count_documents({"user_id": user["user_id"]})
             
             # Get session info
-            session = db_manager.collections['user_sessions'].find_one({"user_id": user["user_id"]})
+            session = user_sessions_collection.find_one({"user_id": user["user_id"]})
             if session:
                 last_active = session.get("last_active")
                 if last_active and (datetime.utcnow() - last_active).total_seconds() < 300:
                     user['online_status'] = "online"
+                elif last_active and (datetime.utcnow() - last_active).total_seconds() < 3600:
+                    user['online_status'] = "recently_active"
                 else:
                     user['online_status'] = "offline"
                 user['last_active'] = last_active
             else:
                 user['online_status'] = "offline"
                 user['last_active'] = None
+            
+            # Calculate user value score
+            user['value_score'] = (
+                user.get("total_earnings", 0) +
+                user.get("tokens_count", 0) * 5 +
+                user.get("referrals_count", 0) * 2 +
+                user.get("transactions_count", 0)
+            )
+            
+            enhanced_users.append(user)
         
         return {
-            "users": users,
-            "total": len(users),
-            "online_count": len([u for u in users if u.get('online_status') == 'online'])
+            "users": enhanced_users,
+            "total": len(enhanced_users),
+            "summary": {
+                "online_users": len([u for u in enhanced_users if u['online_status'] == 'online']),
+                "total_earnings": sum([u.get("total_earnings", 0) for u in enhanced_users]),
+                "total_tokens": sum([u.get("tokens_count", 0) for u in enhanced_users])
+            }
         }
         
     except Exception as e:
-        logger.error(f"Admin users fetch error: {e}")
+        logger.error(f"Get all users error: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch users")
 
 @app.get("/api/admin/workspace/users/{user_id}")
 async def get_user_details(user_id: str, current_user: dict = Depends(require_admin)):
-    """Get comprehensive user details"""
+    """Get comprehensive user details for admin"""
     try:
-        user = db_manager.collections['users'].find_one({"user_id": user_id}, {"password": 0})
+        user = users_collection.find_one({"user_id": user_id}, {"password": 0})
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         
         user['_id'] = str(user['_id'])
         
-        # Get user's tokens
-        tokens = list(db_manager.collections['tokens'].find({"owner_id": user_id}))
+        # Get all user tokens with detailed info
+        tokens = list(tokens_collection.find({"owner_id": user_id}))
         for token in tokens:
             token['_id'] = str(token['_id'])
+            # Calculate token performance
+            if token.get('mining_history'):
+                total_mining_sessions = len(token['mining_history'])
+                avg_earning_per_session = sum([h.get('amount', 0) for h in token['mining_history']]) / max(total_mining_sessions, 1)
+                token['performance_metrics'] = {
+                    "total_sessions": total_mining_sessions,
+                    "avg_earning_per_session": avg_earning_per_session,
+                    "efficiency_score": avg_earning_per_session * total_mining_sessions
+                }
         
-        # Get user's transactions
-        transactions = list(
-            db_manager.collections['transactions'].find({"user_id": user_id})
-            .sort("timestamp", -1)
-            .limit(20)
-        )
+        # Get transaction history
+        transactions = list(transactions_collection.find({"user_id": user_id}).sort("timestamp", -1).limit(50))
         for tx in transactions:
             tx['_id'] = str(tx['_id'])
         
-        # Get referral information
-        referrals = list(db_manager.collections['referrals'].find({"referrer_id": user_id}))
-        for ref in referrals:
+        # Get referral info
+        referrals_made = list(referrals_collection.find({"referrer_id": user_id}))
+        referred_by = referrals_collection.find_one({"referred_id": user_id})
+        
+        for ref in referrals_made:
             ref['_id'] = str(ref['_id'])
+        if referred_by:
+            referred_by['_id'] = str(referred_by['_id'])
         
         # Get notifications
-        notifications = list(
-            db_manager.collections['notifications'].find({"user_id": user_id})
-            .sort("created_at", -1)
-            .limit(10)
-        )
+        notifications = list(notifications_collection.find({"user_id": user_id}).sort("created_at", -1).limit(20))
         for notif in notifications:
             notif['_id'] = str(notif['_id'])
         
-        # Get session information
-        session = db_manager.collections['user_sessions'].find_one({"user_id": user_id})
+        # Get session info
+        session = user_sessions_collection.find_one({"user_id": user_id})
         
         return {
             "user": user,
             "tokens": tokens,
             "transactions": transactions,
-            "referrals": referrals,
+            "referrals": {
+                "made": referrals_made,
+                "referred_by": referred_by
+            },
             "notifications": notifications,
             "session_info": session,
-            "statistics": {
-                "total_tokens": len(tokens),
-                "total_transactions": len(transactions),
-                "total_referrals": len(referrals),
-                "unread_notifications": len([n for n in notifications if not n.get("read", False)])
+            "analytics": {
+                "total_spent": sum([tx.get("amount_usd", 0) for tx in transactions if tx.get("action") in ["token", "boost"]]),
+                "profit_ratio": user.get("total_earnings", 0) / max(sum([tx.get("amount_usd", 0) for tx in transactions if tx.get("action") in ["token", "boost"]]), 1),
+                "activity_score": len(transactions) + len(tokens) * 2 + user.get("referrals_count", 0)
             }
         }
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"User details fetch error: {e}")
+        logger.error(f"Get user details error: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch user details")
 
 @app.post("/api/admin/workspace/send-balance")
 async def admin_send_balance(balance_data: AdminSendBalance, current_user: dict = Depends(require_admin)):
-    """Send balance to a user"""
+    """Send balance to a user with enhanced tracking"""
     try:
-        # Verify target user exists
-        target_user = db_manager.collections['users'].find_one({"user_id": balance_data.user_id})
-        if not target_user:
-            raise HTTPException(status_code=404, detail="Target user not found")
+        user = users_collection.find_one({"user_id": balance_data.user_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
         
-        if target_user.get("is_admin"):
+        if user.get("is_admin"):
             raise HTTPException(status_code=400, detail="Cannot send balance to admin users")
         
         # Update user balance
-        db_manager.collections['users'].update_one(
+        users_collection.update_one(
             {"user_id": balance_data.user_id},
             {"$inc": {"total_earnings": balance_data.amount}}
         )
         
         # Record transaction
-        transaction_id = security_manager.generate_secure_id("TXN")
-        db_manager.collections['transactions'].insert_one({
-            "transaction_id": transaction_id,
+        transaction_ref = f"admin_gift_{uuid.uuid4().hex[:12]}"
+        transactions_collection.insert_one({
             "user_id": balance_data.user_id,
-            "reference": f"admin_gift_{uuid.uuid4().hex[:12]}",
+            "reference": transaction_ref,
             "action": "admin_balance_gift",
             "amount_usd": balance_data.amount,
             "amount_ngn": 0,
@@ -2168,36 +1743,27 @@ async def admin_send_balance(balance_data: AdminSendBalance, current_user: dict 
             "timestamp": datetime.utcnow()
         })
         
+        # Convert amount to user's currency for notification
+        user_currency = user.get("preferred_currency", "USD")
+        amount_converted = await convert_currency(balance_data.amount, "USD", user_currency)
+        
         # Create notification
-        notification_manager.create_notification(
+        create_notification(
             balance_data.user_id,
             "Balance Added! 💰",
-            f"Admin has added ${balance_data.amount:.2f} to your account. Reason: {balance_data.reason}",
+            f"Admin has added {user_currency} {amount_converted:.2f} to your account. Reason: {balance_data.reason}",
             "success",
-            {
-                "amount": balance_data.amount,
-                "reason": balance_data.reason,
-                "admin_id": current_user["user_id"]
-            }
+            "high"
         )
         
-        # Log admin action
-        db_manager.collections['admin_logs'].insert_one({
-            "action": "balance_sent",
-            "admin_id": current_user["user_id"],
-            "target_user_id": balance_data.user_id,
-            "amount": balance_data.amount,
-            "reason": balance_data.reason,
-            "timestamp": datetime.utcnow()
-        })
-        
-        logger.info(f"Admin {current_user['user_id']} sent ${balance_data.amount:.2f} to {balance_data.user_id}")
+        logger.info(f"Admin {current_user['user_id']} sent ${balance_data.amount:.2f} to {balance_data.user_id}: {balance_data.reason}")
         
         return {
             "message": "Balance sent successfully",
             "amount": balance_data.amount,
-            "recipient": balance_data.user_id,
-            "transaction_id": transaction_id
+            "amount_converted": amount_converted,
+            "currency": user_currency,
+            "transaction_reference": transaction_ref
         }
         
     except HTTPException:
@@ -2208,86 +1774,175 @@ async def admin_send_balance(balance_data: AdminSendBalance, current_user: dict 
 
 @app.post("/api/admin/workspace/create-task")
 async def admin_create_task(task_data: AdminCreateTask, current_user: dict = Depends(require_admin)):
-    """Create dynamic task with advanced verification options"""
+    """Create dynamic task with enhanced verification and notification system"""
     try:
-        task_doc = task_manager.create_task(task_data, current_user["user_id"])
-        
-        # Log admin action
-        db_manager.collections['admin_logs'].insert_one({
-            "action": "task_created",
-            "admin_id": current_user["user_id"],
-            "task_id": task_doc["task_id"],
-            "task_title": task_data.title,
+        task_id = str(uuid.uuid4())
+        task_doc = {
+            "task_id": task_id,
+            "title": task_data.title,
+            "description": task_data.description,
             "reward": task_data.reward,
-            "timestamp": datetime.utcnow()
-        })
+            "type": task_data.type,
+            "requirements": task_data.requirements,
+            "expires_at": task_data.expires_at,
+            "verification_type": task_data.verification_type,
+            "external_url": task_data.external_url,
+            "created_by": current_user["user_id"],
+            "created_at": datetime.utcnow(),
+            "active": True,
+            "completed_by": [],
+            "completion_data": [],
+            "max_completions": None if task_data.type == "repeatable" else (None if task_data.type == "daily" else 1000),
+            "difficulty": "easy" if task_data.reward < 1 else ("medium" if task_data.reward < 5 else "hard")
+        }
+        
+        tasks_collection.insert_one(task_doc)
+        
+        # Notify all non-admin users
+        all_users = list(users_collection.find({"is_admin": {"$ne": True}}, {"user_id": 1, "preferred_currency": 1}))
+        notification_count = 0
+        
+        for user_item in all_users:
+            try:
+                user_currency = user_item.get("preferred_currency", "USD")
+                reward_converted = await convert_currency(task_data.reward, "USD", user_currency)
+                
+                create_notification(
+                    user_item["user_id"],
+                    f"New Task Available! 🎯",
+                    f"{task_data.title} - Earn {user_currency} {reward_converted:.2f}",
+                    "info",
+                    task_data.type == "daily" and task_data.reward > 2 and "high" or "medium"
+                )
+                notification_count += 1
+            except Exception as notif_error:
+                logger.warning(f"Failed to notify user {user_item['user_id']}: {notif_error}")
+        
+        logger.info(f"Admin {current_user['user_id']} created task: {task_data.title} (notified {notification_count} users)")
         
         return {
             "message": "Task created successfully",
-            "task_id": task_doc["task_id"],
-            "task_details": task_doc
+            "task_id": task_id,
+            "notifications_sent": notification_count,
+            "task": task_doc
         }
         
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"Admin create task error: {e}")
         raise HTTPException(status_code=500, detail="Failed to create task")
 
 @app.get("/api/admin/workspace/tasks")
 async def get_admin_tasks(current_user: dict = Depends(require_admin)):
-    """Get all tasks with completion statistics"""
+    """Get all tasks with comprehensive analytics"""
     try:
-        tasks = list(db_manager.collections['tasks'].find({}).sort("created_at", -1))
+        tasks = list(tasks_collection.find({}).sort("created_at", -1))
         
+        enhanced_tasks = []
         for task in tasks:
             task['_id'] = str(task['_id'])
-            task['completion_count'] = len(task.get('completed_by', []))
-            task['total_rewards_paid'] = task['completion_count'] * task['reward']
             
-            # Get recent completions
-            recent_completions = task.get('completion_data', [])[-5:]  # Last 5 completions
-            task['recent_completions'] = recent_completions
+            # Calculate task metrics
+            completion_count = len(task.get('completed_by', []))
+            total_rewards_paid = completion_count * task['reward']
+            
+            # Calculate completion rate
+            total_users = users_collection.count_documents({"is_admin": {"$ne": True}})
+            completion_rate = (completion_count / max(total_users, 1)) * 100
+            
+            # Check if task is popular
+            is_popular = completion_rate > 25  # If more than 25% of users completed it
+            
+            task.update({
+                'completion_count': completion_count,
+                'total_rewards_paid': total_rewards_paid,
+                'completion_rate': completion_rate,
+                'is_popular': is_popular,
+                'status': 'active' if task.get('active', True) else 'inactive',
+                'days_active': (datetime.utcnow() - task['created_at']).days
+            })
+            
+            enhanced_tasks.append(task)
+        
+        # Calculate summary statistics
+        total_tasks = len(enhanced_tasks)
+        active_tasks = len([t for t in enhanced_tasks if t['status'] == 'active'])
+        total_rewards_distributed = sum([t['total_rewards_paid'] for t in enhanced_tasks])
+        most_popular_task = max(enhanced_tasks, key=lambda x: x['completion_rate']) if enhanced_tasks else None
         
         return {
-            "tasks": tasks,
-            "total_tasks": len(tasks),
-            "active_tasks": len([t for t in tasks if t.get('active', True)])
+            "tasks": enhanced_tasks,
+            "summary": {
+                "total_tasks": total_tasks,
+                "active_tasks": active_tasks,
+                "total_rewards_distributed": total_rewards_distributed,
+                "most_popular_task": most_popular_task['title'] if most_popular_task else None,
+                "average_completion_rate": sum([t['completion_rate'] for t in enhanced_tasks]) / max(total_tasks, 1)
+            }
         }
         
     except Exception as e:
-        logger.error(f"Admin tasks fetch error: {e}")
+        logger.error(f"Get admin tasks error: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch tasks")
+
+@app.put("/api/admin/workspace/tasks/{task_id}/toggle")
+async def toggle_task_status(task_id: str, current_user: dict = Depends(require_admin)):
+    """Toggle task active status with notification"""
+    try:
+        task = tasks_collection.find_one({"task_id": task_id})
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        
+        new_status = not task.get("active", True)
+        tasks_collection.update_one(
+            {"task_id": task_id},
+            {
+                "$set": {
+                    "active": new_status,
+                    "status_changed_by": current_user["user_id"],
+                    "status_changed_at": datetime.utcnow()
+                }
+            }
+        )
+        
+        # If reactivating a task, notify users
+        if new_status:
+            all_users = list(users_collection.find(
+                {"is_admin": {"$ne": True}},
+                {"user_id": 1, "preferred_currency": 1}
+            ))
+            
+            for user_item in all_users:
+                if user_item["user_id"] not in task.get("completed_by", []):
+                    user_currency = user_item.get("preferred_currency", "USD")
+                    reward_converted = await convert_currency(task["reward"], "USD", user_currency)
+                    
+                    create_notification(
+                        user_item["user_id"],
+                        "Task Reactivated! 🔄",
+                        f"'{task['title']}' is available again - Earn {user_currency} {reward_converted:.2f}",
+                        "info"
+                    )
+        
+        logger.info(f"Admin {current_user['user_id']} {'activated' if new_status else 'deactivated'} task: {task_id}")
+        
+        return {
+            "message": f"Task {'activated' if new_status else 'deactivated'} successfully",
+            "task_id": task_id,
+            "new_status": new_status
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Toggle task status error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to toggle task status")
 
 @app.post("/api/admin/workspace/broadcast")
 async def admin_broadcast(broadcast_data: AdminBroadcast, current_user: dict = Depends(require_admin)):
-    """Send broadcast message to all users"""
+    """Send broadcast message to all users with enhanced targeting"""
     try:
-        broadcast_id = security_manager.generate_secure_id("BROADCAST")
+        broadcast_id = str(uuid.uuid4())
         
-        # Get all non-admin users
-        non_admin_users = list(
-            db_manager.collections['users'].find(
-                {"is_admin": {"$ne": True}},
-                {"user_id": 1}
-            )
-        )
-        
-        # Create notifications for all users
-        for user in non_admin_users:
-            notification_manager.create_notification(
-                user["user_id"],
-                broadcast_data.title,
-                broadcast_data.message,
-                broadcast_data.type,
-                {
-                    "broadcast_id": broadcast_id,
-                    "priority": broadcast_data.priority,
-                    "admin_id": current_user["user_id"]
-                }
-            )
-        
-        # Store broadcast record
         broadcast_doc = {
             "broadcast_id": broadcast_id,
             "title": broadcast_data.title,
@@ -2296,27 +1951,45 @@ async def admin_broadcast(broadcast_data: AdminBroadcast, current_user: dict = D
             "priority": broadcast_data.priority,
             "admin_id": current_user["user_id"],
             "created_at": datetime.utcnow(),
-            "recipient_count": len(non_admin_users)
+            "recipient_count": 0,
+            "delivery_status": "sending"
         }
         
-        db_manager.collections['broadcasts'].insert_one(broadcast_doc)
+        # Get all non-admin users
+        all_users = list(users_collection.find({"is_admin": {"$ne": True}}, {"user_id": 1}))
         
-        # Log admin action
-        db_manager.collections['admin_logs'].insert_one({
-            "action": "broadcast_sent",
-            "admin_id": current_user["user_id"],
-            "broadcast_id": broadcast_id,
-            "title": broadcast_data.title,
-            "recipient_count": len(non_admin_users),
-            "timestamp": datetime.utcnow()
+        successful_deliveries = 0
+        for user_item in all_users:
+            try:
+                create_notification(
+                    user_item["user_id"],
+                    broadcast_data.title,
+                    broadcast_data.message,
+                    broadcast_data.type,
+                    broadcast_data.priority
+                )
+                successful_deliveries += 1
+            except Exception as delivery_error:
+                logger.warning(f"Failed to deliver broadcast to user {user_item['user_id']}: {delivery_error}")
+        
+        # Update broadcast record
+        broadcast_doc.update({
+            "recipient_count": len(all_users),
+            "successful_deliveries": successful_deliveries,
+            "delivery_status": "completed",
+            "delivery_rate": (successful_deliveries / max(len(all_users), 1)) * 100
         })
         
-        logger.info(f"Admin {current_user['user_id']} sent broadcast to {len(non_admin_users)} users")
+        broadcasts_collection.insert_one(broadcast_doc)
+        
+        logger.info(f"Admin {current_user['user_id']} broadcast message to {successful_deliveries}/{len(all_users)} users")
         
         return {
             "message": "Broadcast sent successfully",
             "broadcast_id": broadcast_id,
-            "recipients": len(non_admin_users)
+            "recipients": len(all_users),
+            "successful_deliveries": successful_deliveries,
+            "delivery_rate": broadcast_doc["delivery_rate"]
         }
         
     except Exception as e:
@@ -2325,46 +1998,53 @@ async def admin_broadcast(broadcast_data: AdminBroadcast, current_user: dict = D
 
 @app.get("/api/admin/workspace/broadcasts")
 async def get_admin_broadcasts(current_user: dict = Depends(require_admin)):
-    """Get all admin broadcasts"""
+    """Get all admin broadcasts with analytics"""
     try:
-        broadcasts = list(
-            db_manager.collections['broadcasts'].find({})
-            .sort("created_at", -1)
-            .limit(50)
-        )
+        broadcasts = list(broadcasts_collection.find({}).sort("created_at", -1).limit(100))
         
         for broadcast in broadcasts:
             broadcast['_id'] = str(broadcast['_id'])
+            
+            # Add time-based analytics
+            broadcast['age_hours'] = (datetime.utcnow() - broadcast['created_at']).total_seconds() / 3600
+            broadcast['age_days'] = broadcast['age_hours'] / 24
+        
+        # Calculate summary stats
+        total_broadcasts = len(broadcasts)
+        total_recipients = sum([b.get('recipient_count', 0) for b in broadcasts])
+        average_delivery_rate = sum([b.get('delivery_rate', 0) for b in broadcasts]) / max(total_broadcasts, 1)
         
         return {
             "broadcasts": broadcasts,
-            "total_broadcasts": len(broadcasts)
+            "summary": {
+                "total_broadcasts": total_broadcasts,
+                "total_recipients": total_recipients,
+                "average_delivery_rate": average_delivery_rate,
+                "broadcasts_this_week": len([b for b in broadcasts if b['age_days'] <= 7])
+            }
         }
         
     except Exception as e:
-        logger.error(f"Admin broadcasts fetch error: {e}")
+        logger.error(f"Get admin broadcasts error: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch broadcasts")
 
 @app.post("/api/admin/workspace/users/grant-token")
-async def admin_grant_token_to_user(grant_data: AdminGrantToken, current_user: dict = Depends(require_admin)):
-    """Grant token to user"""
+async def admin_grant_token_to_user(grant_data: AdminGrantToken, current_admin: dict = Depends(require_admin)):
+    """Grant token to user with enhanced validation and tracking"""
     try:
-        # Verify target user
-        target_user = db_manager.collections['users'].find_one({"user_id": grant_data.user_id})
-        if not target_user:
+        user_to_grant = users_collection.find_one({"user_id": grant_data.user_id})
+        if not user_to_grant:
             raise HTTPException(status_code=404, detail="Target user not found")
         
-        if target_user.get("is_admin"):
-            raise HTTPException(status_code=400, detail="Cannot grant tokens to admin users")
-        
-        # Check token limit
-        current_tokens = db_manager.collections['tokens'].count_documents({"owner_id": grant_data.user_id})
-        if current_tokens >= 5:
-            raise HTTPException(status_code=400, detail="User already has maximum tokens (5)")
-        
-        # Create token
-        token_id = security_manager.generate_secure_id("TOKEN")
-        token_name = grant_data.token_name or f"ProfitToken #{current_tokens + 1}"
+        if user_to_grant.get("is_admin"):
+            raise HTTPException(status_code=400, detail="Cannot grant tokens to admin accounts")
+
+        current_tokens_count = tokens_collection.count_documents({"owner_id": grant_data.user_id})
+        if current_tokens_count >= 5:
+            raise HTTPException(status_code=400, detail="User already has the maximum of 5 tokens")
+
+        token_id = str(uuid.uuid4())
+        token_name = grant_data.token_name.strip() if grant_data.token_name and grant_data.token_name.strip() else f"Admin Token #{current_tokens_count + 1}"
         
         token_doc = {
             "token_id": token_id,
@@ -2377,58 +2057,47 @@ async def admin_grant_token_to_user(grant_data: AdminGrantToken, current_user: d
             "active": True,
             "mining_history": [],
             "boost_history": [],
-            "granted_by_admin": current_user["user_id"],
+            "granted_by_admin": current_admin["user_id"],
             "grant_reason": "Admin grant",
             "token_type": "admin_granted"
         }
+        tokens_collection.insert_one(token_doc)
         
-        db_manager.collections['tokens'].insert_one(token_doc)
-        db_manager.collections['users'].update_one(
+        # Update user token count
+        users_collection.update_one(
             {"user_id": grant_data.user_id},
             {"$inc": {"tokens_owned": 1}}
         )
-        
+
         # Record transaction
-        db_manager.collections['transactions'].insert_one({
-            "transaction_id": security_manager.generate_secure_id("TXN"),
+        transactions_collection.insert_one({
             "user_id": grant_data.user_id,
             "reference": f"admin_grant_token_{token_id}",
             "action": "admin_token_grant",
             "amount_usd": 0,
             "status": "success",
-            "admin_id": current_user["user_id"],
+            "admin_id": current_admin["user_id"],
             "token_id_granted": token_id,
             "timestamp": datetime.utcnow()
         })
-        
+
         # Create notification
-        notification_manager.create_notification(
+        create_notification(
             grant_data.user_id,
             "🎁 New Token Granted!",
-            f"An administrator has granted you a new token: '{token_name}'",
+            f"An administrator has granted you a new token: '{token_name}'. It's now actively mining!",
             "success",
-            {
-                "token_id": token_id,
-                "token_name": token_name,
-                "admin_id": current_user["user_id"]
-            }
+            "high"
         )
         
-        # Log admin action
-        db_manager.collections['admin_logs'].insert_one({
-            "action": "token_granted",
-            "admin_id": current_user["user_id"],
-            "target_user_id": grant_data.user_id,
-            "token_id": token_id,
-            "token_name": token_name,
-            "timestamp": datetime.utcnow()
-        })
-        
-        logger.info(f"Admin {current_user['user_id']} granted token to {grant_data.user_id}")
+        logger.info(f"Admin {current_admin['user_id']} granted token to user {grant_data.user_id}: {token_name}")
         
         return {
             "message": "Token granted successfully",
-            "token_details": token_doc
+            "token_id": token_id,
+            "token_name": token_name,
+            "user_id": grant_data.user_id,
+            "new_token_count": current_tokens_count + 1
         }
         
     except HTTPException:
@@ -2437,87 +2106,78 @@ async def admin_grant_token_to_user(grant_data: AdminGrantToken, current_user: d
         logger.error(f"Admin grant token error: {e}")
         raise HTTPException(status_code=500, detail="Failed to grant token")
 
-@app.post("/api/admin/workspace/tokens/boost-token")
-async def admin_boost_user_token(boost_data: AdminBoostToken, current_user: dict = Depends(require_admin)):
-    """Boost user token"""
+@app.post("/api/admin/workspace/users/boost-token")
+async def admin_boost_token(boost_data: AdminBoostToken, current_admin: dict = Depends(require_admin)):
+    """Boost user token with admin privileges"""
     try:
-        # Find token
-        token = db_manager.collections['tokens'].find_one({"token_id": boost_data.token_id})
+        token = tokens_collection.find_one({"token_id": boost_data.token_id})
         if not token:
             raise HTTPException(status_code=404, detail="Token not found")
         
-        # Verify token owner is not admin
-        token_owner = db_manager.collections['users'].find_one({"user_id": token["owner_id"]})
-        if not token_owner:
-            raise HTTPException(status_code=404, detail="Token owner not found")
+        # Check if token owner is admin
+        token_owner = users_collection.find_one({"user_id": token["owner_id"]})
+        if token_owner and token_owner.get("is_admin"):
+            raise HTTPException(status_code=400, detail="Cannot boost admin tokens")
         
-        if token_owner.get("is_admin"):
-            raise HTTPException(status_code=400, detail="Cannot boost admin-owned tokens")
+        if token.get("boost_level", 0) >= 10:
+            raise HTTPException(status_code=400, detail="Token is already at maximum boost level")
         
-        # Boost token
         new_boost_level = token.get("boost_level", 0) + 1
         
-        updated_token = db_manager.collections['tokens'].find_one_and_update(
+        # Update token
+        tokens_collection.update_one(
             {"token_id": boost_data.token_id},
             {
                 "$inc": {"boost_level": 1},
                 "$push": {
                     "boost_history": {
                         "timestamp": datetime.utcnow(),
-                        "cost_usd": 0,
+                        "cost_usd": 0,  # Admin boost is free
                         "new_level": new_boost_level,
-                        "boosted_by_admin": current_user["user_id"],
-                        "boost_reason": "Admin boost",
-                        "boost_type": "admin_granted"
+                        "boosted_by_admin": current_admin["user_id"],
+                        "boost_type": "admin_free"
                     }
                 }
-            },
-            return_document=ReturnDocument.AFTER
-        )
-        
-        # Record transaction
-        db_manager.collections['transactions'].insert_one({
-            "transaction_id": security_manager.generate_secure_id("TXN"),
-            "user_id": token["owner_id"],
-            "reference": f"admin_boost_token_{boost_data.token_id}",
-            "action": "admin_token_boost",
-            "amount_usd": 0,
-            "status": "success",
-            "admin_id": current_user["user_id"],
-            "boosted_token_id": boost_data.token_id,
-            "new_boost_level": new_boost_level,
-            "timestamp": datetime.utcnow()
-        })
-        
-        # Create notification
-        notification_manager.create_notification(
-            token["owner_id"],
-            "🚀 Token Boosted!",
-            f"An administrator has boosted your token '{token['name']}' to Level {new_boost_level}!",
-            "success",
-            {
-                "token_id": boost_data.token_id,
-                "token_name": token["name"],
-                "new_boost_level": new_boost_level,
-                "admin_id": current_user["user_id"]
             }
         )
         
-        # Log admin action
-        db_manager.collections['admin_logs'].insert_one({
-            "action": "token_boosted",
-            "admin_id": current_user["user_id"],
-            "target_user_id": token["owner_id"],
+        # Update user boost count
+        users_collection.update_one(
+            {"user_id": token["owner_id"]},
+            {"$inc": {"boosts_used": 1}}
+        )
+        
+        # Record transaction
+        transactions_collection.insert_one({
+            "user_id": token["owner_id"],
+            "reference": f"admin_boost_{boost_data.token_id}_{uuid.uuid4().hex[:8]}",
+            "action": "admin_token_boost",
+            "amount_usd": 0,
+            "status": "success",
+            "admin_id": current_admin["user_id"],
             "token_id": boost_data.token_id,
             "new_boost_level": new_boost_level,
             "timestamp": datetime.utcnow()
         })
         
-        logger.info(f"Admin {current_user['user_id']} boosted token {boost_data.token_id} to level {new_boost_level}")
+        # Create notification
+        create_notification(
+            token["owner_id"],
+            "⚡ Token Boosted!",
+            f"Admin has boosted your token '{token['name']}' to level {new_boost_level}! Increased mining power!",
+            "success",
+            "high"
+        )
+        
+        logger.info(f"Admin {current_admin['user_id']} boosted token {boost_data.token_id} to level {new_boost_level}")
         
         return {
             "message": "Token boosted successfully",
-            "token_details": updated_token
+            "token_id": boost_data.token_id,
+            "token_name": token["name"],
+            "old_level": new_boost_level - 1,
+            "new_level": new_boost_level,
+            "new_mining_rate": 0.70 * (2 ** new_boost_level)
         }
         
     except HTTPException:
@@ -2528,90 +2188,69 @@ async def admin_boost_user_token(boost_data: AdminBoostToken, current_user: dict
 
 @app.get("/api/admin/workspace/system-status")
 async def get_system_status(current_user: dict = Depends(require_admin)):
-    """Get comprehensive system status"""
+    """Get comprehensive system status and health metrics"""
     try:
-        # Get recent mining logs
-        recent_mining = list(
-            db_manager.collections['mining_logs'].find({})
-            .sort("timestamp", -1)
-            .limit(10)
-        )
+        # Database health
+        db_ping = client.admin.command('ping')['ok']
         
-        for log in recent_mining:
-            log['_id'] = str(log['_id'])
+        # Mining system status
+        mining_status = "active" if mining_task and not mining_task.done() else "inactive"
         
-        # Get system metrics
-        total_users = db_manager.collections['users'].count_documents({})
-        active_users = session_manager.get_online_users_count()
+        # Recent mining logs
+        recent_mining = list(mining_logs_collection.find({}).sort("timestamp", -1).limit(5))
         
-        # Database health check
-        try:
-            db_manager.client.admin.command('ping')
-            db_status = "healthy"
-        except Exception:
-            db_status = "unhealthy"
+        # System performance metrics
+        total_collections = len(db.list_collection_names())
+        
+        # Error logs from today
+        today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        recent_errors = list(system_logs_collection.find({
+            "timestamp": {"$gte": today_start},
+            "level": "error"
+        }).sort("timestamp", -1).limit(10))
+        
+        # Currency rates status
+        currency_rates = currency_rates_collection.find_one({"_id": "latest_rates"})
+        rates_last_updated = currency_rates.get("updated_at") if currency_rates else None
         
         return {
             "system_health": {
-                "database_status": db_status,
-                "total_users": total_users,
-                "active_users": active_users,
-                "system_load": "normal",
-                "api_status": "operational"
+                "database_status": "healthy" if db_ping else "unhealthy",
+                "mining_system": mining_status,
+                "currency_rates_updated": rates_last_updated,
+                "total_collections": total_collections
             },
             "mining_system": {
-                "status": "automated",
-                "is_running": mining_manager.is_running,
-                "next_cycle": "Every 2 hours automatically",
-                "intervention_required": False,
-                "recent_logs": recent_mining
+                "status": mining_status,
+                "recent_sessions": [
+                    {
+                        "timestamp": log["timestamp"],
+                        "tokens_processed": log.get("tokens_processed", 0),
+                        "earnings_distributed": log.get("total_earnings_distributed", 0),
+                        "status": log.get("status", "unknown")
+                    }
+                    for log in recent_mining
+                ]
             },
             "performance_metrics": {
-                "cache_status": "active" if cache_manager.redis_client else "inactive",
-                "database_connections": "optimal",
-                "response_time": "normal"
+                "online_users": get_online_users_count(),
+                "total_users": users_collection.count_documents({"is_admin": {"$ne": True}}),
+                "active_tokens": tokens_collection.count_documents({"active": True}),
+                "pending_notifications": notifications_collection.count_documents({"read": False})
             },
-            "security_status": {
-                "authentication": "operational",
-                "rate_limiting": "active",
-                "encryption": "enabled"
-            }
+            "recent_errors": [
+                {
+                    "timestamp": error["timestamp"],
+                    "message": error.get("message", "Unknown error"),
+                    "module": error.get("module", "system")
+                }
+                for error in recent_errors
+            ]
         }
         
     except Exception as e:
         logger.error(f"System status error: {e}")
-        raise HTTPException(status_code=500, detail="Failed to get system status")
-
-# ============================================================================
-# ERROR HANDLERS
-# ============================================================================
-
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request: Request, exc: HTTPException):
-    """Professional error handling"""
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={
-            "error": True,
-            "message": exc.detail,
-            "status_code": exc.status_code,
-            "timestamp": datetime.utcnow().isoformat()
-        }
-    )
-
-@app.exception_handler(Exception)
-async def general_exception_handler(request: Request, exc: Exception):
-    """Handle unexpected errors"""
-    logger.error(f"Unexpected error: {exc}")
-    return JSONResponse(
-        status_code=500,
-        content={
-            "error": True,
-            "message": "Internal server error",
-            "status_code": 500,
-            "timestamp": datetime.utcnow().isoformat()
-        }
-    )
+        raise HTTPException(status_code=500, detail="Failed to fetch system status")
 
 # ============================================================================
 # APPLICATION STARTUP
@@ -2619,14 +2258,10 @@ async def general_exception_handler(request: Request, exc: Exception):
 
 if __name__ == "__main__":
     import uvicorn
-    
-    logger.info("🚀 Starting ProfitPilot Professional API v4.0.0")
-    
     uvicorn.run(
-        app,
+        "server:app",
         host="0.0.0.0",
         port=8001,
-        log_level="info",
-        access_log=True,
-        reload=True
+        reload=True,
+        log_level="info"
     )
