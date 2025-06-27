@@ -127,7 +127,7 @@ class ProfileUpdate(BaseModel):
 class PaymentVerification(BaseModel):
     reference: str = Field(..., min_length=1)
     token_id: Optional[str] = None
-    action: str = Field(..., regex="^(token|boost)$")
+    action: str = Field(..., pattern="^(token|boost)$")
 
 class AdminSendBalance(BaseModel):
     user_id: str = Field(..., min_length=1)
@@ -138,17 +138,17 @@ class AdminCreateTask(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
     description: str = Field(..., min_length=1, max_length=1000)
     reward: float = Field(..., gt=0, le=1000)
-    type: str = Field(..., regex="^(daily|one_time|repeatable)$")
+    type: str = Field(..., pattern="^(daily|one_time|repeatable)$")
     requirements: Optional[str] = Field(None, max_length=500)
     expires_at: Optional[datetime] = None
-    verification_type: str = Field(default="manual", regex="^(manual|automatic|external)$")
+    verification_type: str = Field(default="manual", pattern="^(manual|automatic|external)$")
     external_url: Optional[str] = Field(None, max_length=500)
 
 class AdminBroadcast(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
     message: str = Field(..., min_length=1, max_length=1000)
-    type: str = Field(..., regex="^(info|warning|success|error)$")
-    priority: str = Field(..., regex="^(low|medium|high)$")
+    type: str = Field(..., pattern="^(info|warning|success|error)$")
+    priority: str = Field(..., pattern="^(low|medium|high)$")
 
 class TaskComplete(BaseModel):
     task_id: str = Field(..., min_length=1)
