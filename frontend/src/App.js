@@ -1,22 +1,32 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import './App.css';
 
-// Professional animation helpers
-const fadeIn = 'transition-opacity duration-700 ease-out opacity-0 animate-fade-in';
-const fadeInUp = 'transition-all duration-700 ease-out opacity-0 translate-y-4 animate-fade-in-up';
+// --- ANIMATION CSS (inject if not present) ---
+if (typeof window !== "undefined") {
+  const style = document.createElement('style');
+  style.innerHTML = `
+    @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+    .animate-fade-in { animation: fade-in 0.7s ease-out forwards; }
+    @keyframes fade-in-up { from { opacity: 0; transform: translateY(16px);} to { opacity: 1; transform: translateY(0);} }
+    .animate-fade-in-up { animation: fade-in-up 0.7s cubic-bezier(.23,1.03,.57,1.05) forwards; }
+    .animate-pulse { animation: pulse 1.5s cubic-bezier(.4,0,.6,1) infinite; }
+    @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:.5;} }
+  `;
+  if (!document.head.querySelector('style[data-pp-anim]')) {
+    style.setAttribute('data-pp-anim', '1');
+    document.head.appendChild(style);
+  }
+}
 
-// Backend URL
 const BACKEND_URL = process.env.REACT_APP_API_URL || 'http://localhost:8001';
 
-// Professional notification system with animation
 const NotificationContainer = ({ notifications }) => (
   <div className="fixed top-6 right-6 z-50 space-y-3">
     {notifications.map(notification => (
       <div
         key={notification.id}
         className={`p-4 rounded-lg shadow-2xl text-white max-w-sm flex items-center gap-3
-          ${fadeIn}
+          animate-fade-in
           ${
             notification.type === 'success' ? 'bg-gradient-to-r from-green-500 to-emerald-600'
             : notification.type === 'error' ? 'bg-gradient-to-r from-red-500 to-pink-500'
@@ -37,39 +47,17 @@ const NotificationContainer = ({ notifications }) => (
   </div>
 );
 
-// Animation keyframes (inject into <style> if not already present)
-if (typeof window !== "undefined") {
-  const style = document.createElement('style');
-  style.innerHTML = `
-    @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
-    .animate-fade-in { animation: fade-in 0.7s ease-out forwards; }
-
-    @keyframes fade-in-up { from { opacity: 0; transform: translateY(16px);} to { opacity: 1; transform: translateY(0);} }
-    .animate-fade-in-up { animation: fade-in-up 0.7s cubic-bezier(.23,1.03,.57,1.05) forwards;}
-  `;
-  if (!document.head.querySelector('style[data-pp-anim]')) {
-    style.setAttribute('data-pp-anim', '1');
-    document.head.appendChild(style);
-  }
-}
-
-// Main App
+// BEGIN APP FUNCTION
 function App() {
-  // --- STATE MANAGEMENT (Professional structure) ---
+  // --- STATE SETUP ---
   const [currentUser, setCurrentUser] = useState(null);
   const [activeTab, setActiveTab] = useState('home');
   const [profileSubTab, setProfileSubTab] = useState('account');
-  const [adminSubTab, setAdminSubTab] = useState('dashboard');
   const [dashboardData, setDashboardData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [showAuth, setShowAuth] = useState(false);
   const [authMode, setAuthMode] = useState('login');
   const [leaderboardData, setLeaderboardData] = useState(null);
-  const [adminDashboard, setAdminDashboard] = useState(null);
-  const [adminUsers, setAdminUsers] = useState([]);
-  const [adminTasks, setAdminTasks] = useState([]);
-  const [adminBroadcasts, setAdminBroadcasts] = useState([]);
-  const [selectedUser, setSelectedUser] = useState(null);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState(0);
   const [miningCountdown, setMiningCountdown] = useState('');
@@ -82,59 +70,23 @@ function App() {
   const [supportedCurrencies, setSupportedCurrencies] = useState({});
   const [currencyRates, setCurrencyRates] = useState(null);
   const [theme, setTheme] = useState('light');
-  const [mobileMenuScrollPos, setMobileMenuScrollPos] = useState(0);
-  const mobileNavRef = useRef(null);
   const [isDashboardRefreshing, setIsDashboardRefreshing] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  // ... (form states and other hooks will go here in next chunk)
-  // --- FORM STATES ---
-  const [authForm, setAuthForm] = useState({
-    email: '',
-    password: '',
-    referralCode: ''
-  });
+
+  // --- FORMS ---
+  const [authForm, setAuthForm] = useState({ email: '', password: '', referralCode: '' });
   const [profileForm, setProfileForm] = useState({
     preferred_currency: 'USD',
     theme: 'light',
     notifications_enabled: true
   });
-  const [sendBalanceForm, setSendBalanceForm] = useState({
-    user_id: '',
-    amount: '',
-    reason: ''
-  });
-  const [createTaskForm, setCreateTaskForm] = useState({
-    title: '',
-    description: '',
-    reward: '',
-    type: 'one_time',
-    requirements: '',
-    expires_at: '',
-    verification_type: 'manual',
-    external_url: ''
-  });
-  const [broadcastForm, setBroadcastForm] = useState({
-    title: '',
-    message: '',
-    type: 'info',
-    priority: 'medium'
-  });
-  const [adminGrantTokenForm, setAdminGrantTokenForm] = useState({
-    user_id: '',
-    token_name: ''
-  });
-  const [adminBoostTokenForm, setAdminBoostTokenForm] = useState({
-    token_id: ''
-  });
-  const [selectedUserForBoost, setSelectedUserForBoost] = useState('');
-  const [selectedUserForBoostTokens, setSelectedUserForBoostTokens] = useState([]);
 
-  // --- THEME EFFECT & UTILITY HOOKS ---
+  // --- THEME EFFECT ---
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark');
   }, [theme]);
 
-  // --- PROFESSIONAL NOTIFICATION WITH ANIMATION ---
+  // --- NOTIFICATION LOGIC ---
   const showNotification = (message, type = 'info') => {
     const id = Date.now() + Math.random();
     setNotifications(prev => [...prev, { id, message, type }]);
@@ -143,7 +95,7 @@ function App() {
     }, 4000);
   };
 
-  // --- PROFESSIONAL COPY TO CLIPBOARD ---
+  // --- COPY REFERRAL LINK ---
   const copyReferralLink = () => {
     if (!currentUser?.referral_code) return;
     const referralLink = `${window.location.origin}?ref=${currentUser.referral_code}`;
@@ -151,7 +103,7 @@ function App() {
     showNotification('Referral link copied to clipboard! 📋', 'success');
   };
 
-  // --- PROFESSIONAL CURRENCY FORMATTER ---
+  // --- CURRENCY FORMATTER ---
   const formatCurrency = (amountInUSD, explicitTargetCurrency = null) => {
     const targetCurrency = explicitTargetCurrency || currentUser?.preferred_currency || 'USD';
     let displayAmount = amountInUSD;
@@ -170,19 +122,7 @@ function App() {
     return `${currencyInfo.symbol}${new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(displayAmount || 0)}`;
   };
 
-  // --- PROFESSIONAL WITHDRAWAL TIMER ---
-  const formatTimeUntilWithdrawal = (eligibleDate) => {
-    if (!eligibleDate) return 'Loading...';
-    const now = new Date();
-    const eligible = new Date(eligibleDate);
-    const diff = eligible - now;
-    if (diff <= 0) return 'Eligible now!';
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-    const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-    return `${days} days, ${hours} hours`;
-  };
-
-  // --- ONBOARDING MODAL (ANIMATED) ---
+  // --- ONBOARDING MODAL ---
   const OnboardingModal = () => {
     const steps = [
       {
@@ -271,29 +211,19 @@ function App() {
   };
   // --- AUTH / SESSION MANAGEMENT & INITIAL LOAD HOOKS ---
   useEffect(() => {
-    // Parse referral and reference codes from URL
     const urlParams = new URLSearchParams(window.location.search);
     const referralCode = urlParams.get('ref');
-    if (referralCode) {
-      setAuthForm(prev => ({ ...prev, referralCode }));
-      setAuthMode('register');
-    }
-    const reference = urlParams.get('reference');
-    if (reference) handlePaymentVerification(reference);
-
-    // Load user session if token exists
+    if (referralCode) setAuthForm(prev => ({ ...prev, referralCode }));
     const token = localStorage.getItem('profitpilot_token');
     if (token) {
       fetchDashboard(token);
     } else {
       setShowAuth(true);
     }
-    // Load supported currencies
     fetchSupportedCurrencies();
     // eslint-disable-next-line
   }, []);
 
-  // Auto-refresh dashboard & notifications
   useEffect(() => {
     if (!showAuth && currentUser) {
       const interval = setInterval(() => {
@@ -304,7 +234,6 @@ function App() {
     }
   }, [showAuth, currentUser]);
 
-  // Show mining earning notification if earnings increased
   useEffect(() => {
     if (currentUser && lastEarnings > 0 && currentUser.total_earnings > lastEarnings) {
       const difference = currentUser.total_earnings - lastEarnings;
@@ -313,7 +242,6 @@ function App() {
     if (currentUser) setLastEarnings(currentUser.total_earnings);
   }, [currentUser?.total_earnings]);
 
-  // Mining countdown timer with smooth updates
   useEffect(() => {
     if (dashboardData?.next_mining) {
       const timer = setInterval(() => {
@@ -374,7 +302,7 @@ function App() {
         showNotification('Failed to load dashboard data', 'error');
       }
     } finally {
-      if (!isBackgroundRefresh) setLoading(false); else setIsDashboardRefreshing(false);
+      if (!isDashboardRefreshing) setLoading(false); else setIsDashboardRefreshing(false);
     }
   };
 
@@ -384,7 +312,7 @@ function App() {
       const response = await axios.get(`${BACKEND_URL}/api/notifications`, { headers: { Authorization: `Bearer ${authToken}` } });
       setUserNotifications(response.data.notifications);
       setUnreadCount(response.data.unread_count);
-    } catch { /* silently ignore, handled in UI */ }
+    } catch { }
   };
 
   const fetchUserTasks = async (token = null) => {
@@ -395,8 +323,6 @@ function App() {
       setUserTasks(response.data.tasks);
     } catch {}
   };
-
-  // --- END OF CHUNK 2 ---
   // --- AUTH HANDLERS & LOGIC ---
   const handleAuth = async (e) => {
     e.preventDefault();
@@ -429,7 +355,7 @@ function App() {
     showNotification('Logged out successfully', 'success');
   };
 
-  // --- PROFESSIONAL PROFILE UPDATE ---
+  // --- PROFILE UPDATE ---
   const handleProfileUpdate = async (e) => {
     if (e.preventDefault) e.preventDefault();
     try {
@@ -448,264 +374,7 @@ function App() {
     }
   };
 
-  // --- ADMIN & TASKS ---
-  const fetchLeaderboard = async () => {
-    try {
-      const response = await axios.get(`${BACKEND_URL}/api/leaderboard`);
-      setLeaderboardData(response.data);
-    } catch { /* silent fail for now */ }
-  };
-
-  // ... Place all admin workspace handlers, sendBalance, createTask, broadcast, grant/boost token, fetchUserDetails, etc. here (use your previous logic, now refactored and animated as needed) ...
-
-  // --- PAYMENT HANDLERS ---
-  const handlePayment = async (action, tokenId = null) => {
-    try {
-      setLoading(true);
-      const token = localStorage.getItem('profitpilot_token');
-      const response = await axios.post(
-        `${BACKEND_URL}/api/payment/initialize`,
-        { action, token_id: tokenId },
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (response.data.authorization_url) {
-        window.location.href = response.data.authorization_url;
-      } else {
-        showNotification('Payment initialization failed', 'error');
-      }
-    } catch (error) {
-      showNotification(error.response?.data?.detail || 'Payment initialization failed', 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handlePaymentVerification = async (reference) => {
-    try {
-      const token = localStorage.getItem('profitpilot_token');
-      await axios.post(
-        `${BACKEND_URL}/api/payment/verify`,
-        { reference },
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      showNotification('Payment successful! 🎉', 'success');
-      fetchDashboard();
-      window.history.replaceState({}, document.title, window.location.pathname);
-    } catch {
-      showNotification('Payment verification failed', 'error');
-    }
-  };
-  // --- ADMIN & ADVANCED HANDLERS (workspace/task/broadcast/token tools) ---
-  // (The following are refactored for clarity and animation readiness)
-  // Adjust these functions as needed for your backend API details
-
-  const fetchAdminDashboard = async () => {
-    try {
-      const token = localStorage.getItem('profitpilot_token');
-      const response = await axios.get(`${BACKEND_URL}/api/admin/workspace/dashboard`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      setAdminDashboard(response.data);
-    } catch {}
-  };
-
-  const fetchAdminUsers = async () => {
-    try {
-      const token = localStorage.getItem('profitpilot_token');
-      const response = await axios.get(`${BACKEND_URL}/api/admin/workspace/users`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      setAdminUsers(response.data.users);
-    } catch {}
-  };
-
-  const fetchUserDetails = async (userId) => {
-    try {
-      const token = localStorage.getItem('profitpilot_token');
-      const response = await axios.get(`${BACKEND_URL}/api/admin/workspace/users/${userId}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      setSelectedUser(response.data);
-    } catch {}
-  };
-
-  const fetchAdminTasks = async () => {
-    try {
-      const token = localStorage.getItem('profitpilot_token');
-      const response = await axios.get(`${BACKEND_URL}/api/admin/workspace/tasks`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      setAdminTasks(response.data.tasks);
-    } catch {}
-  };
-
-  const fetchAdminBroadcasts = async () => {
-    try {
-      const token = localStorage.getItem('profitpilot_token');
-      const response = await axios.get(`${BACKEND_URL}/api/admin/workspace/broadcasts`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      setAdminBroadcasts(response.data.broadcasts);
-    } catch {}
-  };
-
-  const handleSendBalance = async (e) => {
-    e.preventDefault();
-    try {
-      setLoading(true);
-      const token = localStorage.getItem('profitpilot_token');
-      const response = await axios.post(`${BACKEND_URL}/api/admin/workspace/send-balance`, sendBalanceForm, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      showNotification(response.data.message, 'success');
-      setSendBalanceForm({ user_id: '', amount: '', reason: '' });
-      fetchAdminUsers();
-    } catch (error) {
-      showNotification(error.response?.data?.detail || 'Failed to send balance', 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleCreateTask = async (e) => {
-    e.preventDefault();
-    try {
-      setLoading(true);
-      const token = localStorage.getItem('profitpilot_token');
-      const taskData = {
-        ...createTaskForm,
-        reward: parseFloat(createTaskForm.reward),
-        expires_at: createTaskForm.expires_at ? new Date(createTaskForm.expires_at).toISOString() : null
-      };
-      const response = await axios.post(`${BACKEND_URL}/api/admin/workspace/create-task`, taskData, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      showNotification(response.data.message, 'success');
-      setCreateTaskForm({
-        title: '',
-        description: '',
-        reward: '',
-        type: 'one_time',
-        requirements: '',
-        expires_at: '',
-        verification_type: 'manual',
-        external_url: ''
-      });
-      fetchAdminTasks();
-    } catch (error) {
-      showNotification(error.response?.data?.detail || 'Failed to create task', 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleBroadcast = async (e) => {
-    e.preventDefault();
-    try {
-      setLoading(true);
-      const token = localStorage.getItem('profitpilot_token');
-      const response = await axios.post(`${BACKEND_URL}/api/admin/workspace/broadcast`, broadcastForm, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      showNotification(response.data.message, 'success');
-      setBroadcastForm({ title: '', message: '', type: 'info', priority: 'medium' });
-      fetchAdminBroadcasts();
-    } catch (error) {
-      showNotification(error.response?.data?.detail || 'Failed to send broadcast', 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Grant/Boost Token helpers
-  const fetchTokensForUserBoostSelection = async (userId) => {
-    if (!userId) {
-      setSelectedUserForBoostTokens([]);
-      setAdminBoostTokenForm(prev => ({ ...prev, token_id: '' }));
-      return;
-    }
-    setSelectedUserForBoost(userId);
-    try {
-      const token = localStorage.getItem('profitpilot_token');
-      const response = await axios.get(`${BACKEND_URL}/api/admin/workspace/users/${userId}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      setSelectedUserForBoostTokens(response.data.tokens || []);
-      setAdminBoostTokenForm(prev => ({ ...prev, token_id: '' }));
-    } catch {
-      showNotification('Failed to fetch user tokens for boosting.', 'error');
-      setSelectedUserForBoostTokens([]);
-    }
-  };
-
-  const handleAdminGrantToken = async (e) => {
-    e.preventDefault();
-    if (!adminGrantTokenForm.user_id) {
-      showNotification('User ID is required.', 'error');
-      return;
-    }
-    try {
-      setLoading(true);
-      const token = localStorage.getItem('profitpilot_token');
-      const payload = {
-        user_id: adminGrantTokenForm.user_id,
-        token_name: adminGrantTokenForm.token_name.trim() || "Admin Granted Token"
-      };
-      const response = await axios.post(`${BACKEND_URL}/api/admin/workspace/users/grant-token`, payload, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      showNotification(response.data.message, 'success');
-      setAdminGrantTokenForm({ user_id: '', token_name: '' });
-      if (selectedUser && selectedUser.user.user_id === payload.user_id) {
-        fetchUserDetails(payload.user_id);
-      }
-      fetchAdminUsers();
-    } catch (error) {
-      showNotification(error.response?.data?.detail || 'Failed to grant token', 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleAdminBoostToken = async (e) => {
-    e.preventDefault();
-    if (!adminBoostTokenForm.token_id) {
-      showNotification('Token ID is required.', 'error');
-      return;
-    }
-    try {
-      setLoading(true);
-      const token = localStorage.getItem('profitpilot_token');
-      const payload = { token_id: adminBoostTokenForm.token_id };
-      const response = await axios.post(`${BACKEND_URL}/api/admin/workspace/tokens/boost-token`, payload, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      showNotification(response.data.message, 'success');
-      setAdminBoostTokenForm({ token_id: '' });
-      setSelectedUserForBoostTokens([]);
-      setSelectedUserForBoost('');
-      fetchAdminUsers();
-      if (selectedUser && selectedUser.user.user_id === selectedUserForBoost) {
-        fetchUserDetails(selectedUser.user.user_id);
-      }
-    } catch (error) {
-      showNotification(error.response?.data?.detail || 'Failed to boost token', 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // --- MARK NOTIFICATION READ & TASK COMPLETION ---
-  const markNotificationRead = async (notificationId) => {
-    try {
-      const token = localStorage.getItem('profitpilot_token');
-      await axios.post(`${BACKEND_URL}/api/notifications/${notificationId}/read`, {}, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      fetchUserNotifications();
-    } catch {}
-  };
-
+  // --- TASK COMPLETION ---
   const completeTask = async (taskId) => {
     try {
       const token = localStorage.getItem('profitpilot_token');
@@ -721,7 +390,18 @@ function App() {
     }
   };
 
-  // --- UI: MOBILE MENU (Animated) ---
+  // --- NOTIFICATION MARK READ ---
+  const markNotificationRead = async (notificationId) => {
+    try {
+      const token = localStorage.getItem('profitpilot_token');
+      await axios.post(`${BACKEND_URL}/api/notifications/${notificationId}/read`, {}, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      fetchUserNotifications();
+    } catch {}
+  };
+
+  // --- MOBILE MENU ---
   const MobileMenu = () => (
     <div className={`fixed inset-0 bg-black bg-opacity-50 z-40 lg:hidden ${showMobileMenu ? 'block' : 'hidden'} animate-fade-in`}>
       <div className="fixed inset-y-0 left-0 w-80 bg-white dark:bg-gray-800 shadow-lg animate-fade-in-up transition-all duration-500">
@@ -734,10 +414,7 @@ function App() {
               <span className="ml-3 text-xl font-bold text-gray-800 dark:text-white">ProfitPilot</span>
             </div>
             <button
-              onClick={() => {
-                if (mobileNavRef.current) setMobileMenuScrollPos(mobileNavRef.current.scrollTop);
-                setShowMobileMenu(false);
-              }}
+              onClick={() => setShowMobileMenu(false)}
               className="text-gray-500 dark:text-gray-400 text-xl"
             >
               ✕
@@ -748,17 +425,12 @@ function App() {
             <p className="text-xs text-gray-600 dark:text-gray-300">{formatCurrency(currentUser?.total_earnings_converted || 0)}</p>
           </div>
         </div>
-        <nav ref={mobileNavRef} className="p-4 space-y-2 max-h-96 overflow-y-auto">
+        <nav className="p-4 space-y-2 max-h-96 overflow-y-auto">
           {[
             { id: 'home', icon: '🏠', label: 'Dashboard', desc: 'Overview & stats' },
-            ...(currentUser?.is_admin ? [
-              { id: 'workspace', icon: '💼', label: 'Workspace', desc: 'Admin controls' }
-            ] : [
-              { id: 'tokens', icon: '🪙', label: 'My Tokens', desc: 'Manage mining assets' },
-              { id: 'boost', icon: '⚡', label: 'Boost Center', desc: 'Upgrade tokens' },
-              { id: 'tasks', icon: '🎯', label: 'Tasks', desc: 'Complete & earn' },
-              { id: 'notifications', icon: '🔔', label: 'Notifications', desc: `${unreadCount} unread` }
-            ]),
+            { id: 'tokens', icon: '🪙', label: 'My Tokens', desc: 'Manage mining assets' },
+            { id: 'tasks', icon: '🎯', label: 'Tasks', desc: 'Complete & earn' },
+            { id: 'notifications', icon: '🔔', label: 'Notifications', desc: `${unreadCount} unread` },
             { id: 'referrals', icon: '🤝', label: 'Referrals', desc: 'Invite friends' },
             { id: 'profile', icon: '👤', label: 'Profile', desc: 'Account settings' },
             { id: 'board', icon: '🏆', label: 'Leaderboard', desc: 'Top performers' },
@@ -767,7 +439,6 @@ function App() {
             <button
               key={item.id}
               onClick={() => {
-                if (mobileNavRef.current) setMobileMenuScrollPos(mobileNavRef.current.scrollTop);
                 setActiveTab(item.id);
                 setShowMobileMenu(false);
               }}
@@ -804,7 +475,7 @@ function App() {
       </div>
     </div>
   );
-    // --- AUTH PAGE (ANIMATED DESIGN) ---
+  // --- AUTH PAGE (ANIMATED DESIGN) ---
   if (showAuth) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-900 to-purple-900 flex items-center justify-center p-4 animate-fade-in">
@@ -902,7 +573,7 @@ function App() {
       </div>
     );
   }
-  // --- MAIN APP RETURN ---
+  // --- HEADER AND DESKTOP NAVIGATION ---
   return (
     <div className={`min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors duration-300`}>
       {showOnboarding && <OnboardingModal />}
@@ -986,6 +657,7 @@ function App() {
           </div>
         </div>
       </header>
+
       {/* DESKTOP NAVIGATION */}
       <nav className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 hidden lg:block animate-fade-in">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -1020,11 +692,12 @@ function App() {
           </div>
         </div>
       </nav>
+
       {/* MAIN CONTENT - PROFESSIONAL ANIMATED TABS */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 animate-fade-in-up transition-all">
+        {/* === DASHBOARD TAB === */}
         {activeTab === 'home' && dashboardData && (
           <div className="space-y-6">
-            {/* Welcome Header */}
             <div className="bg-gradient-to-r from-blue-600 to-purple-600 rounded-2xl text-white p-6 sm:p-8 shadow-xl animate-fade-in-up">
               <div className="flex flex-col lg:flex-row justify-between items-start">
                 <div className="w-full lg:w-auto">
@@ -1070,7 +743,8 @@ function App() {
                 <span>Professional automated system</span>
               </div>
             </div>
-            {/* DASHBOARD CARDS AND ONBOARDING */}
+
+            {/* DASHBOARD CARDS */}
             {!currentUser?.is_admin && (
               <>
                 <div className="grid grid-cols-2 gap-4 sm:hidden">
@@ -1094,7 +768,6 @@ function App() {
                     )}
                   </button>
                 </div>
-                {/* Earnings, Tokens, Referrals, Boosts */}
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6 animate-fade-in-up">
                   <div className="bg-green-50 dark:bg-green-900 rounded-xl p-4 lg:p-6 animate-fade-in">
                     <div className="flex items-center justify-between mb-2 lg:mb-4">
@@ -1146,12 +819,379 @@ function App() {
           </div>
         )}
 
-        {/* Add your other animated tab content here (workspace, tasks, notifications, referrals, profile, board, help, etc.) */}
-        {/* ... Paste the rest of your professional tab content code as in your original, with animate-fade-in/animate-fade-in-up added to each major content block for smooth entry ... */}
+        {/* === TOKENS TAB === */}
+        {activeTab === 'tokens' && (
+          <div className="animate-fade-in-up">
+            <h2 className="text-2xl font-bold mb-4">🪙 My Tokens</h2>
+            <div className="bg-white dark:bg-gray-800 rounded-xl p-6 text-gray-700 dark:text-gray-200 shadow animate-fade-in">
+              <div>No tokens UI implemented yet. Add your token management UI here.</div>
+            </div>
+          </div>
+        )}
 
+        {/* === TASKS TAB === */}
+        {activeTab === 'tasks' && (
+          <div className="animate-fade-in-up">
+            <h2 className="text-2xl font-bold mb-4">🎯 Tasks</h2>
+            {userTasks.length === 0 ? (
+              <div className="bg-white dark:bg-gray-800 rounded-xl p-6 text-center text-gray-700 dark:text-gray-200 shadow animate-fade-in">
+                <div>No tasks available right now.</div>
+              </div>
+            ) : (
+              <div className="grid gap-4">
+                {userTasks.map(task => (
+                  <div key={task.task_id} className="bg-white dark:bg-gray-800 rounded-xl p-4 flex justify-between items-center shadow animate-fade-in-up">
+                    <div>
+                      <div className="font-semibold">{task.title}</div>
+                      <div className="text-gray-500 text-sm">{task.description}</div>
+                    </div>
+                    <button
+                      onClick={() => completeTask(task.task_id)}
+                      className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition"
+                    >
+                      Complete
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* === NOTIFICATIONS TAB === */}
+        {activeTab === 'notifications' && (
+          <div className="animate-fade-in-up">
+            <h2 className="text-2xl font-bold mb-4">🔔 Notifications</h2>
+            {userNotifications.length === 0 ? (
+              <div className="bg-white dark:bg-gray-800 rounded-xl p-6 text-center text-gray-700 dark:text-gray-200 shadow animate-fade-in">
+                <div>No notifications.</div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {userNotifications.map(notification => (
+                  <div
+                    key={notification.notification_id}
+                    className={`bg-white dark:bg-gray-800 rounded-xl shadow-sm p-4 cursor-pointer transition-colors ${
+                      !notification.read ? 'border-l-4 border-blue-500 bg-blue-50 dark:bg-blue-900' : ''
+                    } animate-fade-in-up`}
+                    onClick={() => !notification.read && markNotificationRead(notification.notification_id)}
+                  >
+                    <div className="flex justify-between items-start">
+                      <div className="flex-1">
+                        <h3 className="font-semibold text-gray-800 dark:text-white mb-1">{notification.title}</h3>
+                        <p className="text-gray-600 dark:text-gray-400 text-sm mb-2">{notification.message}</p>
+                        <p className="text-xs text-gray-500 dark:text-gray-500">
+                          {new Date(notification.created_at).toLocaleString()}
+                        </p>
+                      </div>
+                      <div className="ml-4">
+                        <span className={`inline-block w-3 h-3 rounded-full ${
+                          notification.type === 'success' ? 'bg-green-500' :
+                          notification.type === 'error' ? 'bg-red-500' :
+                          notification.type === 'warning' ? 'bg-yellow-500' : 'bg-blue-500'
+                        }`}></span>
+                        {!notification.read && (
+                          <div className="w-2 h-2 bg-blue-500 rounded-full mt-1 ml-0.5"></div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* === REFERRALS TAB === */}
+        {activeTab === 'referrals' && (
+          <div className="animate-fade-in-up">
+            <h2 className="text-2xl font-bold mb-4">🤝 Referrals</h2>
+            <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow animate-fade-in">
+              <div className="mb-4">
+                <div>Your referral code:</div>
+                <div className="flex items-center space-x-2">
+                  <span className="font-mono font-bold">{currentUser?.referral_code}</span>
+                  <button
+                    onClick={copyReferralLink}
+                    className="bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700 transition"
+                  >
+                    Copy Link
+                  </button>
+                </div>
+              </div>
+              <div className="text-sm text-gray-500 dark:text-gray-400 mb-2">
+                Total referred: <b>{currentUser?.referrals_count}</b>
+              </div>
+              <div className="text-sm text-gray-500 dark:text-gray-400 mb-2">
+                Referral earnings: <b>{formatCurrency(currentUser?.referral_earnings_converted || currentUser?.referral_earnings)}</b>
+              </div>
+            </div>
+            {leaderboardData && (
+              <div className="mt-8">
+                <h3 className="text-lg font-semibold mb-2">Top Referrers</h3>
+                <div className="bg-gray-50 dark:bg-gray-900 p-4 rounded-xl shadow">
+                  {/* Example leaderboard, replace with real data */}
+                  {leaderboardData.map((user, i) => (
+                    <div key={user.user_id} className="flex justify-between py-2 border-b last:border-b-0">
+                      <div>
+                        <span className="font-bold mr-2">#{i + 1}</span>
+                        {user.user_id}
+                      </div>
+                      <div className="font-mono">{user.referrals_count} refs</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* === PROFILE TAB === */}
+        {activeTab === 'profile' && (
+          <div className="animate-fade-in-up">
+            <h2 className="text-2xl font-bold mb-4">👤 Profile</h2>
+            <form onSubmit={handleProfileUpdate} className="space-y-6 bg-white dark:bg-gray-800 rounded-xl p-6 shadow animate-fade-in">
+              <div>
+                <label className="block font-medium mb-1">Preferred Currency</label>
+                <select
+                  value={profileForm.preferred_currency}
+                  onChange={e => setProfileForm(prev => ({ ...prev, preferred_currency: e.target.value }))}
+                  className="block w-full border rounded p-2 dark:bg-gray-700 dark:text-white"
+                >
+                  {Object.entries(supportedCurrencies).map(([code, data]) => (
+                    <option key={code} value={code}>{data.name} ({code})</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block font-medium mb-1">Theme</label>
+                <select
+                  value={profileForm.theme}
+                  onChange={e => {
+                    setProfileForm(prev => ({ ...prev, theme: e.target.value }));
+                    setTheme(e.target.value);
+                  }}
+                  className="block w-full border rounded p-2 dark:bg-gray-700 dark:text-white"
+                >
+                  <option value="light">Light</option>
+                  <option value="dark">Dark</option>
+                </select>
+              </div>
+              <div>
+                <label className="block font-medium mb-1">Enable Notifications</label>
+                <input
+                  type="checkbox"
+                  checked={profileForm.notifications_enabled}
+                  onChange={e => setProfileForm(prev => ({ ...prev, notifications_enabled: e.target.checked }))}
+                  className="form-checkbox"
+                />
+              </div>
+              <button
+                type="submit"
+                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition"
+              >
+                Save Changes
+              </button>
+            </form>
+          </div>
+        )}
+
+        {/* === LEADERBOARD TAB === */}
+        {activeTab === 'board' && (
+          <div className="animate-fade-in-up">
+            <h2 className="text-2xl font-bold mb-4">🏆 Leaderboard</h2>
+            {!leaderboardData ? (
+              <div className="bg-white dark:bg-gray-800 rounded-xl p-6 text-center shadow animate-fade-in">
+                No leaderboard data yet.
+              </div>
+            ) : (
+              <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow animate-fade-in">
+                {leaderboardData.map((user, i) => (
+                  <div key={user.user_id} className="flex justify-between py-2 border-b last:border-b-0">
+                    <div>
+                      <span className="font-bold mr-2">#{i + 1}</span>
+                      {user.user_id}
+                    </div>
+                    <div>{formatCurrency(user.total_earnings_converted || user.total_earnings)}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* === HELP TAB === */}
+        {activeTab === 'help' && (
+          <div className="animate-fade-in-up">
+            <h2 className="text-2xl font-bold mb-4">❓ Help Center</h2>
+            <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow animate-fade-in">
+              <div>Need help? Contact support or check our FAQ!</div>
+            </div>
+          </div>
+        )}
+
+        {/* === ADMIN WORKSPACE TAB === */}
+        {activeTab === 'workspace' && currentUser?.is_admin && (
+          <div className="animate-fade-in-up">
+            <h2 className="text-2xl font-bold mb-4">💼 Admin Workspace</h2>
+            <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow animate-fade-in">
+              <div>Admin controls go here. (User management, tasks, broadcasts, etc.)</div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );
 }
 
+      {/* MAIN CONTENT - PROFESSIONAL ANIMATED TABS */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 animate-fade-in-up transition-all">
+        {/* === DASHBOARD TAB === */}
+        {activeTab === 'home' && dashboardData && (
+          <div className="space-y-10">
+            <div className="bg-gradient-to-r from-blue-600 to-purple-600 rounded-2xl text-white p-6 sm:p-8 shadow-xl animate-fade-in-up">
+              <div className="flex flex-col lg:flex-row justify-between items-start">
+                <div className="w-full lg:w-auto">
+                  <h1 className="text-3xl font-bold mb-2 flex items-center gap-2">
+                    Welcome, <span className="font-mono">{currentUser?.user_id}</span>!
+                  </h1>
+                  <p className="text-blue-100 mb-6">
+                    {currentUser?.is_admin
+                      ? 'Platform operational overview'
+                      : `Your automated mining dashboard in ${currentUser?.preferred_currency || 'USD'}`}
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 lg:gap-8">
+                    <div>
+                      <p className="text-blue-200 text-xs mb-1">Total Balance</p>
+                      <p className="text-3xl font-bold">{formatCurrency(dashboardData.stats.total_balance_converted || dashboardData.stats.total_balance)}</p>
+                    </div>
+                    <div>
+                      <p className="text-blue-200 text-xs mb-1">Active Tokens</p>
+                      <p className="text-3xl font-bold">{dashboardData.stats.active_assets}</p>
+                    </div>
+                  </div>
+                  <div className="mt-6">
+                    <button
+                      onClick={() => setActiveTab('tokens')}
+                      className="inline-flex items-center px-4 py-2 bg-white text-blue-700 font-bold rounded-lg shadow hover:bg-blue-100 transition"
+                      title="Go to My Tokens"
+                    >
+                      🪙 Manage Tokens
+                    </button>
+                  </div>
+                </div>
+                <div className="mt-8 lg:mt-0 flex flex-col items-end w-full lg:w-auto">
+                  <div className="bg-white bg-opacity-20 rounded-lg p-6 mb-2">
+                    <span className="text-5xl">{currentUser?.is_admin ? '🛡️' : '⛏️'}</span>
+                  </div>
+                  <div className="text-right text-blue-100 text-xs">
+                    Next mining: <span className="font-bold">{miningCountdown}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            {/* STATS CARDS */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+              <div className="bg-white dark:bg-gray-800 rounded-xl p-5 shadow flex flex-col items-center animate-fade-in">
+                <span className="text-2xl mb-2">💵</span>
+                <div className="text-xs text-gray-400 uppercase mb-1">Earnings (All Time)</div>
+                <div className="text-lg font-bold text-gray-700 dark:text-white">{formatCurrency(currentUser.total_earnings_converted || currentUser.total_earnings)}</div>
+              </div>
+              <div className="bg-white dark:bg-gray-800 rounded-xl p-5 shadow flex flex-col items-center animate-fade-in">
+                <span className="text-2xl mb-2">🎯</span>
+                <div className="text-xs text-gray-400 uppercase mb-1">Tasks Completed</div>
+                <div className="text-lg font-bold text-gray-700 dark:text-white">{dashboardData.stats.tasks_completed}</div>
+              </div>
+              <div className="bg-white dark:bg-gray-800 rounded-xl p-5 shadow flex flex-col items-center animate-fade-in">
+                <span className="text-2xl mb-2">🤝</span>
+                <div className="text-xs text-gray-400 uppercase mb-1">Referrals</div>
+                <div className="text-lg font-bold text-gray-700 dark:text-white">{currentUser.referrals_count}</div>
+              </div>
+              <div className="bg-white dark:bg-gray-800 rounded-xl p-5 shadow flex flex-col items-center animate-fade-in">
+                <span className="text-2xl mb-2">⚡</span>
+                <div className="text-xs text-gray-400 uppercase mb-1">Boosts Used</div>
+                <div className="text-lg font-bold text-gray-700 dark:text-white">{currentUser.boosts_used}</div>
+              </div>
+            </div>
+            {/* RECENT MINING ACTIVITY */}
+            <div>
+              <h3 className="text-lg font-bold mb-3 text-gray-800 dark:text-white">Recent Mining Activity</h3>
+              {dashboardData.recent_earnings?.length === 0 ? (
+                <div className="bg-white dark:bg-gray-800 rounded-xl p-6 text-center text-gray-400">No mining events yet.</div>
+              ) : (
+                <ul className="bg-white dark:bg-gray-800 rounded-xl shadow divide-y divide-gray-100 dark:divide-gray-700">
+                  {dashboardData.recent_earnings?.map((evt, idx) => (
+                    <li key={idx} className="flex items-center justify-between py-3 px-4">
+                      <div className="text-sm text-gray-700 dark:text-gray-300">
+                        {evt.token_name} mined
+                        <span className="font-bold ml-1">{formatCurrency(evt.earning)}</span>
+                      </div>
+                      <div className="text-xs text-gray-400">{new Date(evt.timestamp).toLocaleString()}</div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* === TOKENS TAB === */}
+        {activeTab === 'tokens' && dashboardData && (
+          <div className="space-y-10 animate-fade-in-up">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-6">
+              <h2 className="text-2xl font-bold text-gray-800 dark:text-white mb-2 sm:mb-0">🪙 My Mining Tokens</h2>
+              <button
+                onClick={() => showNotification('Purchase functionality coming soon!', 'info')}
+                className="bg-blue-600 text-white px-5 py-2 rounded-lg font-medium shadow hover:bg-blue-700 transition-colors"
+              >
+                + Buy New Token
+              </button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+              {dashboardData.tokens?.length === 0 ? (
+                <div className="col-span-full bg-white dark:bg-gray-800 rounded-xl shadow p-8 text-center animate-fade-in">
+                  <div className="text-4xl mb-3">🪙</div>
+                  <p className="text-lg font-semibold text-gray-800 dark:text-white mb-2">No tokens owned yet</p>
+                  <p className="text-gray-600 dark:text-gray-400">Buy tokens to start mining and earning more!</p>
+                </div>
+              ) : (
+                dashboardData.tokens.map(token => (
+                  <div key={token.token_id} className="bg-white dark:bg-gray-800 rounded-xl shadow p-6 relative animate-fade-in-up flex flex-col">
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="text-lg font-bold text-gray-800 dark:text-white">{token.name}</h3>
+                      <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
+                        token.status === 'active'
+                          ? 'bg-green-100 text-green-700'
+                          : 'bg-gray-200 text-gray-600'
+                      }`}>
+                        {token.status === 'active' ? 'Active' : 'Inactive'}
+                      </span>
+                    </div>
+                    <div className="flex-1">
+                      <div className="mb-1 text-sm text-gray-600 dark:text-gray-300">Level: <b>{token.level}</b></div>
+                      <div className="mb-1 text-sm text-gray-600 dark:text-gray-300">Earnings: <b>{formatCurrency(token.last_earning)}</b> / 2hr</div>
+                      <div className="mb-2 text-xs text-gray-400">Last mined: {token.last_mined_at ? new Date(token.last_mined_at).toLocaleString() : 'Never'}</div>
+                      {token.can_boost && (
+                        <button
+                          onClick={() => showNotification('Boost functionality coming soon!', 'info')}
+                          className="mt-2 bg-purple-600 text-white px-4 py-1 rounded-lg font-medium hover:bg-purple-700 transition"
+                        >
+                          🚀 Boost Token
+                        </button>
+                      )}
+                    </div>
+                    {token.status === 'active' && (
+                      <div className="absolute top-4 right-4 bg-green-500 text-white px-2 py-1 text-xs rounded shadow animate-pulse">
+                        Mining
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="mt-8 text-center text-sm text-gray-400">
+              Max tokens: <b>5</b> | Need more slots? <span className="underline cursor-pointer" onClick={() => showNotification('Contact support for upgrades!', 'info')}>Contact us</span>
+            </div>
+          </div>
+        )}
 export default App;
