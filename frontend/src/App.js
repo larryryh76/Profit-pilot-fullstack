@@ -191,13 +191,44 @@ function App() {
 
   const fetchAdminUsers = async () => {
     try {
+      setLoading(true);
       const token = localStorage.getItem('profitpilot_token');
       const response = await axios.get(`${BACKEND_URL}/api/admin/workspace/users`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      setAdminUsers(response.data.users || []);
+      console.log('Admin users response:', response.data); // Debug log
+      
+      // Enhance users data with token information
+      const usersWithTokens = await Promise.all(
+        (response.data.users || []).map(async (user) => {
+          try {
+            // Fetch tokens for this user
+            const tokensResponse = await axios.get(`${BACKEND_URL}/api/admin/workspace/users/${user.user_id}`, {
+              headers: { Authorization: `Bearer ${token}` }
+            });
+            const userTokens = tokensResponse.data.tokens || [];
+            return {
+              ...user,
+              token_ids: userTokens.map(t => t.token_id),
+              token_details: userTokens
+            };
+          } catch (tokenError) {
+            console.error(`Failed to fetch tokens for user ${user.user_id}:`, tokenError);
+            return {
+              ...user,
+              token_ids: [],
+              token_details: []
+            };
+          }
+        })
+      );
+      
+      setAdminUsers(usersWithTokens);
     } catch (error) {
       console.error('Admin users fetch error:', error);
+      showNotification('Failed to fetch users: ' + (error.response?.data?.detail || error.message), 'error');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -485,32 +516,32 @@ function App() {
   // Auth Screen
   if (showAuth) {
     return (
-      <div className={`min-h-screen ${darkMode ? 'dark bg-gray-900' : 'bg-gradient-to-br from-blue-600 to-purple-700'} flex items-center justify-center p-4`}>
-        <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-2xl shadow-2xl w-full max-w-md p-8 fade-in`}>
+      <div className={`min-h-screen ${darkMode ? 'dark bg-primary' : 'bg-gradient-to-br from-blue-600 to-purple-700'} flex items-center justify-center p-4`}>
+        <div className={`card card-elevated w-full max-w-md p-8 fade-in`}>
           <div className="text-center mb-8">
-            <div className="bg-gradient-to-r from-blue-600 to-purple-600 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 bounce-in">
+            <div className="bg-gradient-to-r from-blue-600 to-purple-600 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 shadow-glow">
               <span className="text-white text-2xl font-bold">P</span>
             </div>
-            <h1 className={`text-3xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>ProfitPilot</h1>
-            <p className={`${darkMode ? 'text-gray-300' : 'text-gray-600'} mt-2`}>Professional Crypto Earnings Platform</p>
+            <h1 className="heading-2">ProfitPilot</h1>
+            <p className="body-small">Professional Crypto Earnings Platform</p>
           </div>
 
           <div className="flex mb-6">
             <button
-              className={`flex-1 py-2 px-4 rounded-l-lg font-medium transition-colors btn-hover ${
+              className={`flex-1 py-2 px-4 rounded-l-lg font-medium transition-colors hover-lift ${
                 authMode === 'login' 
-                  ? 'bg-blue-600 text-white' 
-                  : `${darkMode ? 'bg-gray-700 text-gray-300' : 'bg-gray-100 text-gray-600'}`
+                  ? 'bg-primary-600 text-white' 
+                  : 'bg-tertiary text-secondary hover:bg-secondary'
               }`}
               onClick={() => setAuthMode('login')}
             >
               Login
             </button>
             <button
-              className={`flex-1 py-2 px-4 rounded-r-lg font-medium transition-colors btn-hover ${
+              className={`flex-1 py-2 px-4 rounded-r-lg font-medium transition-colors hover-lift ${
                 authMode === 'register' 
-                  ? 'bg-blue-600 text-white' 
-                  : `${darkMode ? 'bg-gray-700 text-gray-300' : 'bg-gray-100 text-gray-600'}`
+                  ? 'bg-primary-600 text-white' 
+                  : 'bg-tertiary text-secondary hover:bg-secondary'
               }`}
               onClick={() => setAuthMode('register')}
             >
@@ -525,9 +556,7 @@ function App() {
                 placeholder="Email"
                 value={authForm.email}
                 onChange={(e) => setAuthForm({...authForm, email: e.target.value})}
-                className={`form-input ${
-                  darkMode ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' : 'border-gray-300'
-                }`}
+                className="form-input"
                 required
               />
             </div>
@@ -537,15 +566,13 @@ function App() {
                 placeholder="Password"
                 value={authForm.password}
                 onChange={(e) => setAuthForm({...authForm, password: e.target.value})}
-                className={`form-input pr-10 ${
-                  darkMode ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' : 'border-gray-300'
-                }`}
+                className="form-input"
                 required
               />
               <button
                 type="button"
                 onClick={() => authMode === 'login' ? setShowPasswordLogin(!showPasswordLogin) : setShowPasswordRegister(!showPasswordRegister)}
-                className={`absolute right-3 top-1/2 transform -translate-y-1/2 text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'} hover:opacity-70`}
+                className="absolute right-3 top-1/2 transform -translate-y-1/2 text-sm text-tertiary hover:text-secondary transition-colors"
               >
                 {(authMode === 'login' ? showPasswordLogin : showPasswordRegister) ? '👁️' : '👁️‍🗨️'}
               </button>
@@ -557,22 +584,18 @@ function App() {
                   placeholder="Referral Code (Optional)"
                   value={authForm.referralCode}
                   onChange={(e) => setAuthForm({...authForm, referralCode: e.target.value})}
-                  className={`form-input ${
-                    darkMode ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' : 'border-gray-300'
-                  }`}
+                  className="form-input"
                 />
               </div>
             )}
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-gradient-to-r from-blue-600 to-purple-600 text-white py-3 rounded-lg font-medium hover:opacity-90 disabled:opacity-50 transition-opacity btn-hover"
+              className="btn btn-primary btn-lg w-full"
             >
               {loading ? (
-                <div className="flex items-center justify-center">
-                  <div className="loading-dots">
-                    <div></div><div></div><div></div><div></div>
-                  </div>
+                <div className="loading-dots">
+                  <div></div><div></div><div></div><div></div>
                 </div>
               ) : (authMode === 'login' ? 'Login' : 'Register')}
             </button>
@@ -581,7 +604,7 @@ function App() {
           <div className="mt-6 text-center">
             <button
               onClick={() => setDarkMode(!darkMode)}
-              className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'} hover:opacity-70 transition-opacity`}
+              className="text-sm text-tertiary hover:text-secondary transition-colors"
             >
               {darkMode ? '☀️ Light Mode' : '🌙 Dark Mode'}
             </button>
@@ -592,14 +615,14 @@ function App() {
   }
 
   return (
-    <div className={`min-h-screen ${darkMode ? 'dark bg-gray-900' : 'bg-gray-50'}`}>
+    <div className={`min-h-screen ${darkMode ? 'dark' : ''} bg-primary`}>
       {/* Welcome Popup */}
       {showWelcomePopup && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-2xl p-8 max-w-md w-full relative bounce-in`}>
+          <div className="card card-elevated max-w-md w-full p-8 bounce-in">
             <button
               onClick={() => setShowWelcomePopup(false)}
-              className={`absolute top-4 right-4 ${darkMode ? 'text-gray-400 hover:text-white' : 'text-gray-500 hover:text-gray-700'} text-xl transition-colors`}
+              className="absolute top-4 right-4 text-tertiary hover:text-primary text-xl transition-colors"
             >
               ✕
             </button>
@@ -607,15 +630,13 @@ function App() {
               <div className="bg-gradient-to-r from-blue-600 to-purple-600 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 shadow-glow">
                 <span className="text-white text-2xl">🎉</span>
               </div>
-              <h2 className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'} mb-4`}>
-                Welcome to ProfitPilot!
-              </h2>
-              <p className={`${darkMode ? 'text-gray-300' : 'text-gray-600'} mb-6`}>
+              <h2 className="heading-3 mb-4">Welcome to ProfitPilot!</h2>
+              <p className="body-regular text-secondary mb-6">
                 Your crypto earning journey starts now. Your first token is already mining and will generate earnings every 2 hours!
               </p>
               <button
                 onClick={() => setShowWelcomePopup(false)}
-                className="bg-gradient-to-r from-blue-600 to-purple-600 text-white px-6 py-2 rounded-lg font-medium hover:opacity-90 transition-opacity btn-hover"
+                className="btn btn-primary"
               >
                 Get Started
               </button>
@@ -625,12 +646,12 @@ function App() {
       )}
 
       {/* Mobile Header */}
-      <header className={`${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'} shadow-sm border-b lg:hidden`}>
+      <header className="card border-b lg:hidden">
         <div className="px-4 py-3 flex justify-between items-center">
           <div className="flex items-center">
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
-              className={`${darkMode ? 'text-gray-300' : 'text-gray-600'} p-2 hover:opacity-70 transition-opacity`}
+              className="text-secondary p-2 hover:text-primary transition-colors"
             >
               ☰
             </button>
@@ -638,18 +659,18 @@ function App() {
               <div className="bg-gradient-to-r from-blue-600 to-purple-600 w-8 h-8 rounded-full flex items-center justify-center shadow-glow">
                 <span className="text-white text-sm font-bold">P</span>
               </div>
-              <span className={`ml-2 text-lg font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>ProfitPilot</span>
+              <span className="ml-2 text-lg font-bold text-primary">ProfitPilot</span>
             </div>
           </div>
           <div className="flex items-center space-x-2">
-            <div className={`${darkMode ? 'bg-gray-700' : 'bg-gray-50'} rounded-lg px-2 py-1`}>
-              <span className={`text-xs ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+            <div className="bg-tertiary rounded-lg px-2 py-1">
+              <span className="text-xs text-secondary currency-small currency-positive">
                 {formatCurrency(currentUser?.total_earnings_converted || 0, currentUser?.preferred_currency)}
               </span>
             </div>
             <button
               onClick={handleLogout}
-              className={`${darkMode ? 'text-red-400' : 'text-red-600'} text-sm p-1 hover:opacity-70 transition-opacity`}
+              className="text-error text-sm p-1 hover:opacity-70 transition-opacity"
             >
               🚪
             </button>
@@ -661,25 +682,23 @@ function App() {
         {/* Sidebar */}
         <aside className={`${
           sidebarOpen ? 'translate-x-0' : '-translate-x-full'
-        } lg:translate-x-0 fixed lg:static inset-y-0 left-0 z-40 w-64 ${
-          darkMode ? 'bg-gray-800' : 'bg-white'
-        } border-r ${darkMode ? 'border-gray-700' : 'border-gray-200'} transition-transform duration-300 ease-in-out lg:transition-none overflow-y-auto slide-in-left`}>
+        } lg:translate-x-0 fixed lg:static inset-y-0 left-0 z-40 w-64 card border-r transition-transform duration-300 ease-in-out lg:transition-none overflow-y-auto slide-in-left`}>
           
           {/* Sidebar Header */}
-          <div className="p-6 border-b border-gray-200 dark:border-gray-700">
+          <div className="p-6 border-b border-primary">
             <div className="flex items-center justify-between">
               <div className="flex items-center">
                 <div className="bg-gradient-to-r from-blue-600 to-purple-600 w-10 h-10 rounded-full flex items-center justify-center shadow-glow">
                   <span className="text-white text-lg font-bold">P</span>
                 </div>
                 <div className="ml-3">
-                  <span className={`text-xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>ProfitPilot</span>
-                  <span className="ml-2 text-xs bg-green-100 text-green-600 px-2 py-1 rounded-full font-medium badge badge-success">PRO</span>
+                  <span className="text-xl font-bold text-primary">ProfitPilot</span>
+                  <span className="ml-2 badge badge-success">PRO</span>
                 </div>
               </div>
               <button
                 onClick={() => setSidebarOpen(false)}
-                className={`lg:hidden ${darkMode ? 'text-gray-400' : 'text-gray-600'} hover:opacity-70 transition-opacity`}
+                className="lg:hidden text-secondary hover:text-primary transition-colors"
               >
                 ✕
               </button>
@@ -687,31 +706,31 @@ function App() {
           </div>
 
           {/* User Info */}
-          <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-            <div className={`${darkMode ? 'bg-gray-700' : 'bg-gray-50'} rounded-lg p-3 glass-effect`}>
+          <div className="p-4 border-b border-primary">
+            <div className="card card-glass p-3">
               <div className="flex items-center space-x-3">
                 <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full flex items-center justify-center shadow-glow">
                   <span className="text-white font-bold">{currentUser?.email?.[0]?.toUpperCase()}</span>
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className={`text-sm font-medium ${darkMode ? 'text-white' : 'text-gray-800'} truncate`}>
+                  <p className="text-sm font-medium text-primary truncate">
                     {currentUser?.user_id}
                   </p>
-                  <p className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'} truncate`}>
+                  <p className="text-xs text-secondary truncate">
                     {currentUser?.email}
                   </p>
                 </div>
               </div>
               <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                <div className={`${darkMode ? 'bg-gray-600' : 'bg-white'} rounded p-2 text-center card-hover`}>
-                  <p className={`${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>Balance</p>
-                  <p className={`font-bold ${darkMode ? 'text-green-400' : 'text-green-600'}`}>
+                <div className="card p-2 text-center hover-lift">
+                  <p className="text-secondary caption">Balance</p>
+                  <p className="font-bold currency-small currency-positive">
                     {formatCurrency(currentUser?.total_earnings_converted || 0, currentUser?.preferred_currency)}
                   </p>
                 </div>
-                <div className={`${darkMode ? 'bg-gray-600' : 'bg-white'} rounded p-2 text-center card-hover`}>
-                  <p className={`${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>Tokens</p>
-                  <p className={`font-bold ${darkMode ? 'text-blue-400' : 'text-blue-600'}`}>
+                <div className="card p-2 text-center hover-lift">
+                  <p className="text-secondary caption">Tokens</p>
+                  <p className="font-bold text-primary">
                     {currentUser?.tokens_owned || 0}/5
                   </p>
                 </div>
@@ -728,21 +747,21 @@ function App() {
               { id: 'notifications', label: 'Notifications', icon: '🔔' },
               { id: 'leaderboard', label: 'Leaderboard', icon: '🏆' },
               { id: 'profile', label: 'Profile', icon: '👤' },
-              ...(currentUser?.is_admin ? [{ id: 'workspace', label: 'Workspace', icon: '💼' }] : [])
+              ...(currentUser?.is_admin ? [{ id: 'workspace', label: 'Admin Workspace', icon: '💼' }] : [])
             ].map(({ id, label, icon }) => (
               <button
                 key={id}
                 onClick={() => handleTabSwitch(id)}
-                className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-left transition-all duration-200 btn-hover ${
+                className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-left transition-all duration-200 hover-lift ${
                   activeTab === id
-                    ? 'bg-blue-600 text-white shadow-glow'
-                    : `${darkMode ? 'text-gray-300 hover:bg-gray-700' : 'text-gray-700 hover:bg-gray-100'}`
+                    ? 'bg-primary-600 text-white shadow-glow'
+                    : 'text-secondary hover:bg-tertiary hover:text-primary'
                 }`}
               >
                 <span className="text-lg">{icon}</span>
                 <span className="font-medium">{label}</span>
                 {id === 'notifications' && notificationsData.filter(n => !n.read).length > 0 && (
-                  <span className="ml-auto bg-red-500 text-white text-xs rounded-full px-2 py-1 loading-pulse">
+                  <span className="ml-auto bg-error text-white text-xs rounded-full px-2 py-1 loading-pulse">
                     {notificationsData.filter(n => !n.read).length}
                   </span>
                 )}
@@ -751,15 +770,13 @@ function App() {
           </nav>
 
           {/* Theme Toggle */}
-          <div className="p-4 border-t border-gray-200 dark:border-gray-700">
+          <div className="p-4 border-t border-primary">
             <button
               onClick={() => {
                 setDarkMode(!darkMode);
                 updateProfile({ theme: !darkMode ? 'dark' : 'light' });
               }}
-              className={`w-full flex items-center justify-between px-3 py-2 rounded-lg transition-colors btn-hover ${
-                darkMode ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-700'
-              }`}
+              className="w-full flex items-center justify-between px-3 py-2 rounded-lg transition-colors hover-lift card"
             >
               <span className="flex items-center space-x-2">
                 <span>{darkMode ? '☀️' : '🌙'}</span>
@@ -776,9 +793,7 @@ function App() {
           <div className="p-4">
             <button
               onClick={handleLogout}
-              className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition-colors btn-hover ${
-                darkMode ? 'text-red-400 hover:bg-gray-700' : 'text-red-600 hover:bg-red-50'
-              }`}
+              className="w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition-colors hover-lift text-error hover:bg-error-50"
             >
               <span>🚪</span>
               <span>Logout</span>
@@ -801,31 +816,31 @@ function App() {
             {activeTab === 'dashboard' && dashboardData && (
               <div className="space-y-6 fade-in">
                 {/* Welcome Header */}
-                <div className="bg-gradient-to-r from-blue-600 to-purple-600 rounded-2xl text-white p-6 lg:p-8 card-hover shadow-glow">
+                <div className="card card-gradient text-white p-6 lg:p-8 hover-lift shadow-glow">
                   <div className="flex flex-col lg:flex-row lg:justify-between lg:items-start">
                     <div className="flex-1">
-                      <h1 className="text-2xl lg:text-3xl font-bold mb-2 heading-2">
+                      <h1 className="heading-2 mb-2">
                         Good {new Date().getHours() < 12 ? 'Morning' : new Date().getHours() < 18 ? 'Afternoon' : 'Evening'}
                       </h1>
-                      <p className="text-blue-100 mb-6 body-regular">Here's your portfolio performance today</p>
+                      <p className="body-regular text-blue-100 mb-6">Here's your portfolio performance today</p>
                       
                       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         <div>
-                          <p className="text-blue-200 text-sm mb-1">Total Balance</p>
-                          <p className="text-3xl lg:text-4xl font-bold text-gradient">
+                          <p className="text-blue-200 caption mb-1">Total Balance</p>
+                          <p className="currency-large text-gradient">
                             {formatCurrency(dashboardData.stats.total_balance_converted, currentUser.preferred_currency)}
                           </p>
                         </div>
                         <div>
-                          <p className="text-blue-200 text-sm mb-1">Mining Rate</p>
-                          <p className="text-3xl lg:text-4xl font-bold">
+                          <p className="text-blue-200 caption mb-1">Mining Rate</p>
+                          <p className="currency-large">
                             {formatCurrency(dashboardData.stats.mining_rate_converted, currentUser.preferred_currency)}/2h
                           </p>
                         </div>
                       </div>
                     </div>
                     <div className="mt-4 lg:mt-0">
-                      <div className="bg-white bg-opacity-20 rounded-lg p-3 glass-effect">
+                      <div className="bg-white bg-opacity-20 rounded-lg p-3 card-glass">
                         <span className="text-2xl">✨</span>
                       </div>
                     </div>
@@ -834,89 +849,89 @@ function App() {
 
                 {/* Stats Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                  <div className={`${darkMode ? 'bg-gray-800' : 'bg-green-50'} rounded-xl p-6 card-hover`}>
+                  <div className="card card-hover p-6 bg-success-50 border-success-200">
                     <div className="flex items-center justify-between mb-4">
-                      <div className="bg-green-500 rounded-lg p-2 shadow-glow">
+                      <div className="bg-success-500 rounded-lg p-2 shadow-glow">
                         <span className="text-white text-lg">💰</span>
                       </div>
-                      <span className="text-green-600 text-sm font-medium badge badge-success">Total</span>
+                      <span className="badge badge-success">Total</span>
                     </div>
-                    <p className={`${darkMode ? 'text-gray-400' : 'text-gray-600'} text-sm mb-1 caption`}>Total Earnings</p>
-                    <p className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'} heading-3`}>
+                    <p className="caption mb-1">Total Earnings</p>
+                    <p className="heading-3 currency-medium currency-positive">
                       {formatCurrency(currentUser.total_earnings_converted, currentUser.preferred_currency)}
                     </p>
                   </div>
 
-                  <div className={`${darkMode ? 'bg-gray-800' : 'bg-blue-50'} rounded-xl p-6 card-hover`}>
+                  <div className="card card-hover p-6 bg-primary-50 border-primary-200">
                     <div className="flex items-center justify-between mb-4">
-                      <div className="bg-blue-500 rounded-lg p-2 shadow-glow">
+                      <div className="bg-primary-500 rounded-lg p-2 shadow-glow">
                         <span className="text-white text-lg">🪙</span>
                       </div>
-                      <span className="text-blue-600 text-sm font-medium badge badge-info">{currentUser.tokens_owned}/5</span>
+                      <span className="badge badge-primary">{currentUser.tokens_owned}/5</span>
                     </div>
-                    <p className={`${darkMode ? 'text-gray-400' : 'text-gray-600'} text-sm mb-1 caption`}>Active Tokens</p>
-                    <p className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'} heading-3`}>{currentUser.tokens_owned}</p>
+                    <p className="caption mb-1">Active Tokens</p>
+                    <p className="heading-3">{currentUser.tokens_owned}</p>
                   </div>
 
-                  <div className={`${darkMode ? 'bg-gray-800' : 'bg-purple-50'} rounded-xl p-6 card-hover`}>
+                  <div className="card card-hover p-6 bg-purple-50 border-purple-200">
                     <div className="flex items-center justify-between mb-4">
                       <div className="bg-purple-500 rounded-lg p-2 shadow-glow">
                         <span className="text-white text-lg">👥</span>
                       </div>
-                      <span className="text-purple-600 text-sm font-medium badge">
+                      <span className="badge badge-info">
                         {formatCurrency(currentUser.referral_earnings_converted, currentUser.preferred_currency)} earned
                       </span>
                     </div>
-                    <p className={`${darkMode ? 'text-gray-400' : 'text-gray-600'} text-sm mb-1 caption`}>Referrals</p>
-                    <p className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'} heading-3`}>{currentUser.referrals_count}</p>
+                    <p className="caption mb-1">Referrals</p>
+                    <p className="heading-3">{currentUser.referrals_count}</p>
                   </div>
 
-                  <div className={`${darkMode ? 'bg-gray-800' : 'bg-orange-50'} rounded-xl p-6 card-hover`}>
+                  <div className="card card-hover p-6 bg-warning-50 border-warning-200">
                     <div className="flex items-center justify-between mb-4">
-                      <div className="bg-orange-500 rounded-lg p-2 shadow-glow">
+                      <div className="bg-warning-500 rounded-lg p-2 shadow-glow">
                         <span className="text-white text-lg">⚡</span>
                       </div>
-                      <span className="text-orange-600 text-sm font-medium badge badge-warning">Total</span>
+                      <span className="badge badge-warning">Total</span>
                     </div>
-                    <p className={`${darkMode ? 'text-gray-400' : 'text-gray-600'} text-sm mb-1 caption`}>Boosts Used</p>
-                    <p className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'} heading-3`}>{currentUser.boosts_used}</p>
+                    <p className="caption mb-1">Boosts Used</p>
+                    <p className="heading-3">{currentUser.boosts_used}</p>
                   </div>
                 </div>
 
                 {/* Referral Section */}
-                <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-xl shadow-sm p-6 card-hover`}>
-                  <h3 className={`text-lg font-semibold ${darkMode ? 'text-white' : 'text-gray-800'} mb-4 heading-3`}>🤝 Referral Program</h3>
-                  <div className={`${darkMode ? 'bg-gray-700' : 'bg-gray-50'} rounded-lg p-4 mb-4 glass-effect`}>
-                    <p className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'} mb-2 caption`}>Your referral code:</p>
+                <div className="card card-hover p-6">
+                  <h3 className="heading-3 mb-4">🤝 Referral Program</h3>
+                  <div className="card card-glass p-4 mb-4">
+                    <p className="caption mb-2">Your referral code:</p>
                     <div className="flex items-center space-x-2">
-                      <code className={`${darkMode ? 'bg-gray-600 text-white' : 'bg-gray-200'} px-3 py-1 rounded text-sm font-mono border-gradient`}>
+                      <code className="bg-tertiary px-3 py-1 rounded text-sm font-mono border-gradient">
                         {currentUser.referral_code}
                       </code>
                       <button
                         onClick={copyReferralLink}
-                        className="bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700 transition-colors btn-hover"
+                        className="btn btn-primary btn-sm"
                       >
                         Copy Link
                       </button>
                     </div>
                   </div>
-                  <p className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'} body-small`}>
+                  <p className="body-small text-secondary">
                     Earn {formatCurrency(2, currentUser.preferred_currency)} for each person who joins with your code!
                   </p>
                 </div>
 
                 {/* Withdrawal Timer */}
-                <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-xl shadow-sm p-6 card-hover`}>
-                  <h3 className={`text-lg font-semibold ${darkMode ? 'text-white' : 'text-gray-800'} mb-4 heading-3`}>💸 Withdrawal Status</h3>
-                  <div className={`${darkMode ? 'bg-yellow-900' : 'bg-yellow-50'} rounded-lg p-4 glass-effect`}>
+                <div className="card card-hover p-6">
+                  <h3 className="heading-3 mb-4">💸 Withdrawal Status</h3>
+                  <div className="card card-glass p-4 bg-warning-50">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'} body-regular`}>Time until withdrawal eligible:</p>
-                        <p className={`text-2xl font-bold ${darkMode ? 'text-yellow-400' : 'text-yellow-600'} heading-2`}>
+                        <p className="body-regular font-medium">Time until withdrawal eligible:</p>
+                        <p className="heading-2 text-warning-600">
                           {formatTimeUntilWithdrawal(currentUser.withdrawal_eligible_at)}
                         </p>
                       </div>
-                      <div className={`${darkMode ? 'text-yellow-400' : 'text-yellow-500'} text-3xl loading-pulse`}>⏰</div>
+                      <div className="text-warning-500 text-3xl loading-pulse">⏰</div>
                     </div>
                   </div>
                 </div>
@@ -927,20 +942,20 @@ function App() {
             {activeTab === 'tokens' && dashboardData && (
               <div className="space-y-6 fade-in">
                 <div className="flex flex-col lg:flex-row lg:justify-between lg:items-center">
-                  <h2 className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'} mb-2 lg:mb-0 heading-2`}>🪙 Your Tokens</h2>
-                  <p className={`${darkMode ? 'text-gray-300' : 'text-gray-600'} body-regular`}>Manage your mining tokens and earnings</p>
+                  <h2 className="heading-2 mb-2 lg:mb-0">🪙 Your Tokens</h2>
+                  <p className="body-regular text-secondary">Manage your mining tokens and earnings</p>
                 </div>
 
                 {currentUser.tokens_owned < 5 && (
-                  <div className={`${darkMode ? 'bg-blue-900' : 'bg-blue-50'} rounded-xl p-6 card-hover`}>
-                    <h3 className={`text-lg font-semibold ${darkMode ? 'text-white' : 'text-gray-800'} mb-2 heading-3`}>Add More Tokens</h3>
-                    <p className={`${darkMode ? 'text-gray-300' : 'text-gray-600'} mb-4 body-regular`}>
+                  <div className="card card-hover p-6 bg-primary-50">
+                    <h3 className="heading-3 mb-2">Add More Tokens</h3>
+                    <p className="body-regular text-secondary mb-4">
                       Expand your mining capacity with additional tokens ({formatCurrency(5, currentUser.preferred_currency)} each)
                     </p>
                     <button
                       onClick={() => handlePayment('token')}
                       disabled={loading}
-                      className="bg-blue-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors btn-hover"
+                      className="btn btn-primary"
                     >
                       {loading ? (
                         <div className="loading-dots"><div></div><div></div><div></div><div></div></div>
@@ -953,36 +968,36 @@ function App() {
 
                 <div className="grid gap-6">
                   {dashboardData.tokens.map((token) => (
-                    <div key={token.token_id} className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-xl shadow-sm p-6 card-hover`}>
+                    <div key={token.token_id} className="card card-hover p-6">
                       <div className="flex flex-col lg:flex-row lg:justify-between lg:items-start mb-4">
                         <div className="mb-4 lg:mb-0">
-                          <h3 className={`text-lg font-semibold ${darkMode ? 'text-white' : 'text-gray-800'} heading-3`}>{token.name}</h3>
-                          <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'} caption`}>
+                          <h3 className="heading-3">{token.name}</h3>
+                          <p className="caption">
                             Created: {new Date(token.created_at).toLocaleDateString()}
                           </p>
                         </div>
                         <div className="text-left lg:text-right">
-                          <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'} caption`}>Boost Level</p>
-                          <p className={`text-2xl font-bold ${darkMode ? 'text-blue-400' : 'text-blue-600'} heading-2`}>{token.boost_level}</p>
+                          <p className="caption">Boost Level</p>
+                          <p className="heading-2 text-primary">{token.boost_level}</p>
                         </div>
                       </div>
 
                       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
-                        <div className={`${darkMode ? 'bg-gray-700' : 'bg-gray-50'} rounded-lg p-3`}>
-                          <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'} caption`}>Total Earned</p>
-                          <p className={`text-lg font-semibold ${darkMode ? 'text-green-400' : 'text-green-600'} body-large`}>
+                        <div className="card p-3">
+                          <p className="caption">Total Earned</p>
+                          <p className="body-large currency-medium currency-positive">
                             {formatCurrency(token.total_earnings_converted, currentUser.preferred_currency)}
                           </p>
                         </div>
-                        <div className={`${darkMode ? 'bg-gray-700' : 'bg-gray-50'} rounded-lg p-3`}>
-                          <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'} caption`}>Income Per Cycle</p>
-                          <p className={`text-lg font-semibold ${darkMode ? 'text-blue-400' : 'text-blue-600'} body-large`}>
+                        <div className="card p-3">
+                          <p className="caption">Income Per Cycle</p>
+                          <p className="body-large currency-medium text-primary">
                             {formatCurrency(token.hourly_rate_converted, currentUser.preferred_currency)}/2h
                           </p>
                         </div>
-                        <div className={`${darkMode ? 'bg-gray-700' : 'bg-gray-50'} rounded-lg p-3`}>
-                          <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'} caption`}>Next Boost Cost</p>
-                          <p className={`text-lg font-semibold ${darkMode ? 'text-orange-400' : 'text-orange-600'} body-large`}>
+                        <div className="card p-3">
+                          <p className="caption">Next Boost Cost</p>
+                          <p className="body-large currency-medium text-warning-600">
                             {formatCurrency(3 * Math.pow(2, token.boost_level), currentUser.preferred_currency)}
                           </p>
                         </div>
@@ -991,7 +1006,7 @@ function App() {
                       <button
                         onClick={() => handlePayment('boost', token.token_id)}
                         disabled={loading || token.boost_level >= 10}
-                        className="w-full bg-gradient-to-r from-orange-500 to-red-500 text-white py-2 rounded-lg font-medium hover:opacity-90 disabled:opacity-50 transition-opacity btn-hover"
+                        className="btn btn-warning w-full"
                       >
                         {loading ? (
                           <div className="loading-dots"><div></div><div></div><div></div><div></div></div>
@@ -1009,39 +1024,39 @@ function App() {
             {activeTab === 'tasks' && (
               <div className="space-y-6 fade-in">
                 <div className="flex flex-col lg:flex-row lg:justify-between lg:items-center">
-                  <h2 className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'} mb-2 lg:mb-0 heading-2`}>🎯 Available Tasks</h2>
+                  <h2 className="heading-2 mb-2 lg:mb-0">🎯 Available Tasks</h2>
                   <button
                     onClick={fetchTasks}
                     disabled={loading}
-                    className={`${darkMode ? 'text-blue-400' : 'text-blue-600'} hover:opacity-70 disabled:opacity-50 transition-opacity btn-hover`}
+                    className="btn btn-secondary btn-sm"
                   >
                     🔄 Refresh
                   </button>
                 </div>
 
                 {loading ? (
-                  <div className="text-center py-12 empty-state">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-                    <p className={`mt-4 ${darkMode ? 'text-gray-300' : 'text-gray-600'} body-regular`}>Loading tasks...</p>
+                  <div className="empty-state">
+                    <div className="loading-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
+                    <p className="body-regular text-secondary">Loading tasks...</p>
                   </div>
                 ) : tasksData.length === 0 ? (
-                  <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-xl shadow-sm p-8 text-center empty-state`}>
+                  <div className="card card-hover empty-state">
                     <div className="empty-state-icon">🎯</div>
-                    <h3 className={`empty-state-title ${darkMode ? 'text-white' : 'text-gray-800'}`}>No tasks available</h3>
-                    <p className={`empty-state-description ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>Check back later for new earning opportunities!</p>
+                    <h3 className="empty-state-title">No tasks available</h3>
+                    <p className="empty-state-description">Check back later for new earning opportunities!</p>
                   </div>
                 ) : (
                   <div className="grid gap-6">
                     {tasksData.map((task) => (
-                      <div key={task.task_id} className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-xl shadow-sm p-6 card-hover border-gradient`}>
+                      <div key={task.task_id} className="card card-hover p-6 border-gradient">
                         <div className="flex flex-col lg:flex-row lg:justify-between lg:items-start mb-4">
                           <div className="flex-1 mb-4 lg:mb-0">
                             <div className="flex items-center space-x-2 mb-2">
-                              <h3 className={`text-lg font-semibold ${darkMode ? 'text-white' : 'text-gray-800'} heading-3`}>{task.title}</h3>
+                              <h3 className="heading-3">{task.title}</h3>
                               <span className={`badge ${
                                 task.type === 'daily' ? 'badge-success' :
                                 task.type === 'one_time' ? 'badge-info' :
-                                'badge'
+                                'badge-primary'
                               }`}>
                                 {task.type.replace('_', ' ')}
                               </span>
@@ -1051,14 +1066,14 @@ function App() {
                                 </span>
                               )}
                             </div>
-                            <p className={`${darkMode ? 'text-gray-300' : 'text-gray-600'} mb-2 body-regular`}>{task.description}</p>
+                            <p className="body-regular text-secondary mb-2">{task.description}</p>
                             {task.requirements && (
-                              <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'} body-small`}>
+                              <p className="body-small text-tertiary">
                                 <strong>Requirements:</strong> {task.requirements}
                               </p>
                             )}
                             {task.external_url && (
-                              <p className={`text-sm ${darkMode ? 'text-blue-400' : 'text-blue-600'} mt-2 body-small`}>
+                              <p className="body-small text-primary mt-2">
                                 🔗 <a href={task.external_url} target="_blank" rel="noopener noreferrer" className="underline hover:opacity-70 transition-opacity">
                                   Complete this task
                                 </a>
@@ -1066,8 +1081,8 @@ function App() {
                             )}
                           </div>
                           <div className="text-left lg:text-right">
-                            <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'} caption`}>Reward</p>
-                            <p className={`text-2xl font-bold ${darkMode ? 'text-green-400' : 'text-green-600'} heading-2 text-gradient`}>
+                            <p className="caption">Reward</p>
+                            <p className="heading-2 currency-medium currency-positive text-gradient">
                               {formatCurrency(task.reward_converted, task.currency)}
                             </p>
                           </div>
@@ -1076,7 +1091,7 @@ function App() {
                         <div className="flex flex-col lg:flex-row lg:justify-between lg:items-center">
                           <div className="mb-4 lg:mb-0">
                             {task.expires_at && (
-                              <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'} caption`}>
+                              <p className="caption">
                                 Expires: {new Date(task.expires_at).toLocaleDateString()}
                               </p>
                             )}
@@ -1084,7 +1099,7 @@ function App() {
                           <button
                             onClick={() => completeTask(task.task_id)}
                             disabled={loading}
-                            className="bg-green-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-green-700 disabled:opacity-50 transition-colors btn-hover shadow-glow"
+                            className="btn btn-success shadow-glow"
                           >
                             {loading ? (
                               <div className="loading-dots"><div></div><div></div><div></div><div></div></div>
@@ -1104,67 +1119,67 @@ function App() {
             {activeTab === 'notifications' && (
               <div className="space-y-6 fade-in">
                 <div className="flex flex-col lg:flex-row lg:justify-between lg:items-center">
-                  <h2 className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'} mb-2 lg:mb-0 heading-2`}>🔔 Notifications</h2>
+                  <h2 className="heading-2 mb-2 lg:mb-0">🔔 Notifications</h2>
                   <button
                     onClick={fetchNotifications}
                     disabled={loading}
-                    className={`${darkMode ? 'text-blue-400' : 'text-blue-600'} hover:opacity-70 disabled:opacity-50 transition-opacity btn-hover`}
+                    className="btn btn-secondary btn-sm"
                   >
                     🔄 Refresh
                   </button>
                 </div>
 
                 {loading ? (
-                  <div className="text-center py-12 empty-state">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-                    <p className={`mt-4 ${darkMode ? 'text-gray-300' : 'text-gray-600'} body-regular`}>Loading notifications...</p>
+                  <div className="empty-state">
+                    <div className="loading-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
+                    <p className="body-regular text-secondary">Loading notifications...</p>
                   </div>
                 ) : notificationsData.length === 0 ? (
-                  <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-xl shadow-sm p-8 text-center empty-state`}>
+                  <div className="card card-hover empty-state">
                     <div className="empty-state-icon">🔔</div>
-                    <h3 className={`empty-state-title ${darkMode ? 'text-white' : 'text-gray-800'}`}>No notifications</h3>
-                    <p className={`empty-state-description ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>You're all caught up!</p>
+                    <h3 className="empty-state-title">No notifications</h3>
+                    <p className="empty-state-description">You're all caught up!</p>
                   </div>
                 ) : (
                   <div className="space-y-4">
                     {notificationsData.map((notification) => (
                       <div
                         key={notification.notification_id}
-                        className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-xl shadow-sm p-4 border-l-4 card-hover ${
-                          notification.type === 'success' ? 'border-green-500' :
-                          notification.type === 'error' ? 'border-red-500' :
-                          notification.type === 'warning' ? 'border-yellow-500' :
-                          'border-blue-500'
-                        } ${!notification.read ? 'ring-2 ring-blue-500 ring-opacity-20 shadow-glow' : 'opacity-70'}`}
+                        className={`card card-hover p-4 border-l-4 ${
+                          notification.type === 'success' ? 'border-success-500' :
+                          notification.type === 'error' ? 'border-error-500' :
+                          notification.type === 'warning' ? 'border-warning-500' :
+                          'border-primary-500'
+                        } ${!notification.read ? 'ring-2 ring-primary-500 ring-opacity-20 shadow-glow' : 'opacity-70'}`}
                       >
                         <div className="flex justify-between items-start">
                           <div className="flex-1">
                             <div className="flex items-center space-x-2 mb-2">
-                              <h4 className={`font-semibold ${darkMode ? 'text-white' : 'text-gray-800'} heading-3`}>
+                              <h4 className="heading-4">
                                 {notification.title}
                               </h4>
                               {!notification.read && (
-                                <span className="w-2 h-2 bg-blue-500 rounded-full loading-pulse"></span>
+                                <span className="w-2 h-2 bg-primary-500 rounded-full loading-pulse"></span>
                               )}
                               <span className={`badge ${
                                 notification.priority === 'high' ? 'badge-error' :
                                 notification.priority === 'medium' ? 'badge-warning' :
-                                'badge'
+                                'badge-info'
                               }`}>
                                 {notification.priority}
                               </span>
                             </div>
-                            <p className={`${darkMode ? 'text-gray-300' : 'text-gray-600'} mb-2 body-regular`}>
+                            <p className="body-regular text-secondary mb-2">
                               {notification.message}
                             </p>
-                            <p className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'} caption`}>
+                            <p className="caption">
                               {new Date(notification.created_at).toLocaleString()}
                             </p>
                           </div>
                           {!notification.read && (
                             <button
                               onClick={() => markNotificationRead(notification.notification_id)}
-                              className={`text-sm ${darkMode ? 'text-blue-400' : 'text-blue-600'} hover:opacity-70 ml-4 transition-opacity btn-hover`}
+                              className="btn btn-secondary btn-sm ml-4"
                             >
                               Mark Read
                             </button>
@@ -1181,28 +1196,28 @@ function App() {
             {activeTab === 'leaderboard' && (
               <div className="space-y-6 fade-in">
                 <div className="flex flex-col lg:flex-row lg:justify-between lg:items-center">
-                  <h2 className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'} mb-2 lg:mb-0 heading-2`}>🏆 Leaderboard</h2>
+                  <h2 className="heading-2 mb-2 lg:mb-0">🏆 Leaderboard</h2>
                   <button
                     onClick={fetchLeaderboard}
                     disabled={loading}
-                    className={`${darkMode ? 'text-blue-400' : 'text-blue-600'} hover:opacity-70 disabled:opacity-50 transition-opacity btn-hover`}
+                    className="btn btn-secondary btn-sm"
                   >
                     🔄 Refresh
                   </button>
                 </div>
                 
                 {loading ? (
-                  <div className="text-center py-12 empty-state">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-                    <p className={`mt-4 ${darkMode ? 'text-gray-300' : 'text-gray-600'} body-regular`}>Loading leaderboard...</p>
+                  <div className="empty-state">
+                    <div className="loading-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
+                    <p className="body-regular text-secondary">Loading leaderboard...</p>
                   </div>
                 ) : leaderboardData ? (
                   <div className="grid lg:grid-cols-2 gap-6">
-                    <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-xl shadow-sm p-6 card-hover`}>
-                      <h3 className={`text-lg font-semibold ${darkMode ? 'text-white' : 'text-gray-800'} mb-4 heading-3`}>🥇 Top Earners</h3>
+                    <div className="card card-hover p-6">
+                      <h3 className="heading-3 mb-4">🥇 Top Earners</h3>
                       <div className="space-y-3">
                         {leaderboardData.top_earners.map((user, index) => (
-                          <div key={user.user_id} className={`flex items-center justify-between p-3 ${darkMode ? 'bg-gray-700' : 'bg-gray-50'} rounded-lg card-hover glass-effect`}>
+                          <div key={user.user_id} className="flex items-center justify-between p-3 card card-glass hover-lift">
                             <div className="flex items-center space-x-3">
                               <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-bold shadow-glow ${
                                 index === 0 ? 'bg-yellow-500' : 
@@ -1212,26 +1227,26 @@ function App() {
                                 {index + 1}
                               </div>
                               <div>
-                                <p className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'} body-regular`}>{user.user_id}</p>
-                                <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'} caption`}>{user.email}</p>
+                                <p className="body-regular font-medium text-primary">{user.user_id}</p>
+                                <p className="caption">{user.email}</p>
                               </div>
                             </div>
                             <div className="text-right">
-                              <p className={`font-semibold ${darkMode ? 'text-green-400' : 'text-green-600'} body-large`}>
+                              <p className="body-large font-semibold currency-medium currency-positive">
                                 {formatCurrency(user.total_earnings_converted, user.currency)}
                               </p>
-                              <p className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'} caption`}>{user.tokens_owned} tokens</p>
+                              <p className="caption">{user.tokens_owned} tokens</p>
                             </div>
                           </div>
                         ))}
                       </div>
                     </div>
 
-                    <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-xl shadow-sm p-6 card-hover`}>
-                      <h3 className={`text-lg font-semibold ${darkMode ? 'text-white' : 'text-gray-800'} mb-4 heading-3`}>⚡ Most Boosted Tokens</h3>
+                    <div className="card card-hover p-6">
+                      <h3 className="heading-3 mb-4">⚡ Most Boosted Tokens</h3>
                       <div className="space-y-3">
                         {leaderboardData.top_tokens.map((token, index) => (
-                          <div key={`${token.name}-${index}`} className={`flex items-center justify-between p-3 ${darkMode ? 'bg-gray-700' : 'bg-gray-50'} rounded-lg card-hover glass-effect`}>
+                          <div key={`${token.name}-${index}`} className="flex items-center justify-between p-3 card card-glass hover-lift">
                             <div className="flex items-center space-x-3">
                               <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-bold shadow-glow ${
                                 index === 0 ? 'bg-yellow-500' : 
@@ -1241,13 +1256,13 @@ function App() {
                                 {index + 1}
                               </div>
                               <div>
-                                <p className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'} body-regular`}>{token.name}</p>
-                                <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'} caption`}>Owner: {token.owner_id}</p>
+                                <p className="body-regular font-medium text-primary">{token.name}</p>
+                                <p className="caption">Owner: {token.owner_id}</p>
                               </div>
                             </div>
                             <div className="text-right">
-                              <p className={`font-semibold ${darkMode ? 'text-blue-400' : 'text-blue-600'} body-large`}>Level {token.boost_level}</p>
-                              <p className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'} caption`}>
+                              <p className="body-large font-semibold text-primary">Level {token.boost_level}</p>
+                              <p className="caption">
                                 {formatCurrency(token.total_earnings, 'USD')}
                               </p>
                             </div>
@@ -1257,10 +1272,10 @@ function App() {
                     </div>
                   </div>
                 ) : (
-                  <div className="text-center py-12 empty-state">
+                  <div className="empty-state">
                     <div className="empty-state-icon">🏆</div>
-                    <h3 className={`empty-state-title ${darkMode ? 'text-white' : 'text-gray-800'}`}>Failed to load leaderboard</h3>
-                    <p className={`empty-state-description ${darkMode ? 'text-gray-300' : 'text-gray-500'}`}>Please try refreshing the page</p>
+                    <h3 className="empty-state-title">Failed to load leaderboard</h3>
+                    <p className="empty-state-description">Please try refreshing the page</p>
                   </div>
                 )}
               </div>
@@ -1269,28 +1284,28 @@ function App() {
             {/* Profile Tab */}
             {activeTab === 'profile' && (
               <div className="space-y-6 fade-in">
-                <h2 className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'} heading-2`}>👤 Profile Settings</h2>
+                <h2 className="heading-2">👤 Profile Settings</h2>
                 
                 <div className="grid lg:grid-cols-2 gap-6">
                   {/* Account Information */}
-                  <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-xl shadow-sm p-6 card-hover`}>
-                    <h3 className={`text-lg font-semibold ${darkMode ? 'text-white' : 'text-gray-800'} mb-4 heading-3`}>Account Information</h3>
+                  <div className="card card-hover p-6">
+                    <h3 className="heading-3 mb-4">Account Information</h3>
                     <div className="space-y-4">
                       <div className="form-group">
-                        <label className={`form-label ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>User ID</label>
-                        <p className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'} body-regular`}>{currentUser?.user_id}</p>
+                        <label className="form-label">User ID</label>
+                        <p className="body-regular font-medium text-primary">{currentUser?.user_id}</p>
                       </div>
                       <div className="form-group">
-                        <label className={`form-label ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>Email</label>
-                        <p className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'} body-regular`}>{currentUser?.email}</p>
+                        <label className="form-label">Email</label>
+                        <p className="body-regular font-medium text-primary">{currentUser?.email}</p>
                       </div>
                       <div className="form-group">
-                        <label className={`form-label ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>Country</label>
-                        <p className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'} body-regular`}>{currentUser?.country || 'Not set'}</p>
+                        <label className="form-label">Country</label>
+                        <p className="body-regular font-medium text-primary">{currentUser?.country || 'Not set'}</p>
                       </div>
                       <div className="form-group">
-                        <label className={`form-label ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>Member Since</label>
-                        <p className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'} body-regular`}>
+                        <label className="form-label">Member Since</label>
+                        <p className="body-regular font-medium text-primary">
                           {new Date(currentUser?.created_at).toLocaleDateString()}
                         </p>
                       </div>
@@ -1298,11 +1313,11 @@ function App() {
                   </div>
 
                   {/* Currency Settings */}
-                  <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-xl shadow-sm p-6 card-hover`}>
-                    <h3 className={`text-lg font-semibold ${darkMode ? 'text-white' : 'text-gray-800'} mb-4 heading-3`}>Currency Settings</h3>
+                  <div className="card card-hover p-6">
+                    <h3 className="heading-3 mb-4">Currency Settings</h3>
                     <div className="space-y-4">
                       <div className="form-group">
-                        <label className={`form-label ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+                        <label className="form-label">
                           Preferred Currency
                         </label>
                         <select
@@ -1311,9 +1326,7 @@ function App() {
                             setProfileForm({...profileForm, preferred_currency: e.target.value});
                             updateProfile({ preferred_currency: e.target.value });
                           }}
-                          className={`form-input ${
-                            darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'border-gray-300'
-                          }`}
+                          className="form-input"
                         >
                           {Object.entries(supportedCurrencies.currencies || {}).map(([code, info]) => (
                             <option key={code} value={code}>
@@ -1322,9 +1335,9 @@ function App() {
                           ))}
                         </select>
                       </div>
-                      <div className={`${darkMode ? 'bg-gray-700' : 'bg-gray-50'} rounded-lg p-3 glass-effect`}>
-                        <p className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'} mb-1 caption`}>Current Balance</p>
-                        <p className={`text-xl font-bold ${darkMode ? 'text-green-400' : 'text-green-600'} body-large text-gradient`}>
+                      <div className="card card-glass p-3">
+                        <p className="caption mb-1">Current Balance</p>
+                        <p className="currency-medium currency-positive text-gradient">
                           {formatCurrency(currentUser?.total_earnings_converted || 0, currentUser?.preferred_currency)}
                         </p>
                       </div>
@@ -1332,13 +1345,13 @@ function App() {
                   </div>
 
                   {/* Preferences */}
-                  <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-xl shadow-sm p-6 card-hover`}>
-                    <h3 className={`text-lg font-semibold ${darkMode ? 'text-white' : 'text-gray-800'} mb-4 heading-3`}>Preferences</h3>
+                  <div className="card card-hover p-6">
+                    <h3 className="heading-3 mb-4">Preferences</h3>
                     <div className="space-y-4">
                       <div className="flex items-center justify-between">
                         <div>
-                          <p className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'} body-regular`}>Dark Mode</p>
-                          <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'} caption`}>Toggle dark/light theme</p>
+                          <p className="body-regular font-medium text-primary">Dark Mode</p>
+                          <p className="caption">Toggle dark/light theme</p>
                         </div>
                         <div className="toggle-switch">
                           <input 
@@ -1354,8 +1367,8 @@ function App() {
                       </div>
                       <div className="flex items-center justify-between">
                         <div>
-                          <p className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'} body-regular`}>Email Notifications</p>
-                          <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'} caption`}>Receive mining and task updates</p>
+                          <p className="body-regular font-medium text-primary">Email Notifications</p>
+                          <p className="caption">Receive mining and task updates</p>
                         </div>
                         <div className="toggle-switch">
                           <input 
@@ -1374,30 +1387,30 @@ function App() {
                   </div>
 
                   {/* Statistics */}
-                  <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-xl shadow-sm p-6 card-hover`}>
-                    <h3 className={`text-lg font-semibold ${darkMode ? 'text-white' : 'text-gray-800'} mb-4 heading-3`}>Your Statistics</h3>
+                  <div className="card card-hover p-6">
+                    <h3 className="heading-3 mb-4">Your Statistics</h3>
                     <div className="grid grid-cols-2 gap-4">
-                      <div className={`${darkMode ? 'bg-gray-700' : 'bg-gray-50'} rounded-lg p-3 text-center glass-effect`}>
-                        <p className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'} caption`}>Total Earnings</p>
-                        <p className={`text-lg font-bold ${darkMode ? 'text-green-400' : 'text-green-600'} body-large`}>
+                      <div className="card text-center p-3 card-glass">
+                        <p className="caption">Total Earnings</p>
+                        <p className="body-large font-bold currency-medium currency-positive">
                           {formatCurrency(currentUser?.total_earnings_converted || 0, currentUser?.preferred_currency)}
                         </p>
                       </div>
-                      <div className={`${darkMode ? 'bg-gray-700' : 'bg-gray-50'} rounded-lg p-3 text-center glass-effect`}>
-                        <p className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'} caption`}>Referral Earnings</p>
-                        <p className={`text-lg font-bold ${darkMode ? 'text-purple-400' : 'text-purple-600'} body-large`}>
+                      <div className="card text-center p-3 card-glass">
+                        <p className="caption">Referral Earnings</p>
+                        <p className="body-large font-bold currency-medium text-purple-600">
                           {formatCurrency(currentUser?.referral_earnings_converted || 0, currentUser?.preferred_currency)}
                         </p>
                       </div>
-                      <div className={`${darkMode ? 'bg-gray-700' : 'bg-gray-50'} rounded-lg p-3 text-center glass-effect`}>
-                        <p className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'} caption`}>Login Count</p>
-                        <p className={`text-lg font-bold ${darkMode ? 'text-blue-400' : 'text-blue-600'} body-large`}>
+                      <div className="card text-center p-3 card-glass">
+                        <p className="caption">Login Count</p>
+                        <p className="body-large font-bold text-primary">
                           {currentUser?.login_count || 0}
                         </p>
                       </div>
-                      <div className={`${darkMode ? 'bg-gray-700' : 'bg-gray-50'} rounded-lg p-3 text-center glass-effect`}>
-                        <p className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'} caption`}>Active Days</p>
-                        <p className={`text-lg font-bold ${darkMode ? 'text-orange-400' : 'text-orange-600'} body-large`}>
+                      <div className="card text-center p-3 card-glass">
+                        <p className="caption">Active Days</p>
+                        <p className="body-large font-bold text-warning-600">
                           {Math.floor((new Date() - new Date(currentUser?.created_at)) / (1000 * 60 * 60 * 24)) || 0}
                         </p>
                       </div>
@@ -1410,44 +1423,44 @@ function App() {
             {/* Admin Workspace Tab */}
             {activeTab === 'workspace' && currentUser?.is_admin && (
               <div className="space-y-6 fade-in">
-                <h2 className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'} heading-2`}>💼 Admin Workspace</h2>
+                <h2 className="heading-2">💼 Admin Workspace</h2>
                 
                 {/* Dashboard Stats */}
                 {adminDashboard && (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                    <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-xl shadow-sm p-6 card-hover`}>
-                      <h3 className={`text-lg font-semibold ${darkMode ? 'text-white' : 'text-gray-800'} mb-2 heading-3`}>Total Revenue</h3>
-                      <p className={`text-3xl font-bold ${darkMode ? 'text-green-400' : 'text-green-600'} heading-2 text-gradient`}>
+                    <div className="card card-hover p-6">
+                      <h3 className="heading-3 mb-2">Total Revenue</h3>
+                      <p className="currency-large currency-positive text-gradient">
                         {formatCurrency(adminDashboard.revenue_metrics?.total_revenue || 0, 'USD')}
                       </p>
-                      <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'} caption`}>
+                      <p className="caption">
                         Today: {formatCurrency(adminDashboard.revenue_metrics?.today_revenue || 0, 'USD')}
                       </p>
                     </div>
-                    <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-xl shadow-sm p-6 card-hover`}>
-                      <h3 className={`text-lg font-semibold ${darkMode ? 'text-white' : 'text-gray-800'} mb-2 heading-3`}>Total Users</h3>
-                      <p className={`text-3xl font-bold ${darkMode ? 'text-blue-400' : 'text-blue-600'} heading-2`}>
+                    <div className="card card-hover p-6">
+                      <h3 className="heading-3 mb-2">Total Users</h3>
+                      <p className="currency-large text-primary">
                         {adminDashboard.user_metrics?.total_users || 0}
                       </p>
-                      <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'} caption`}>
+                      <p className="caption">
                         Online: {adminDashboard.user_metrics?.users_online || 0}
                       </p>
                     </div>
-                    <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-xl shadow-sm p-6 card-hover`}>
-                      <h3 className={`text-lg font-semibold ${darkMode ? 'text-white' : 'text-gray-800'} mb-2 heading-3`}>Active Tokens</h3>
-                      <p className={`text-3xl font-bold ${darkMode ? 'text-purple-400' : 'text-purple-600'} heading-2`}>
+                    <div className="card card-hover p-6">
+                      <h3 className="heading-3 mb-2">Active Tokens</h3>
+                      <p className="currency-large text-purple-600">
                         {adminDashboard.token_metrics?.active_tokens || 0}
                       </p>
-                      <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'} caption`}>
+                      <p className="caption">
                         Purchased: {adminDashboard.token_metrics?.tokens_bought || 0}
                       </p>
                     </div>
-                    <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-xl shadow-sm p-6 card-hover`}>
-                      <h3 className={`text-lg font-semibold ${darkMode ? 'text-white' : 'text-gray-800'} mb-2 heading-3`}>Active Tasks</h3>
-                      <p className={`text-3xl font-bold ${darkMode ? 'text-orange-400' : 'text-orange-600'} heading-2`}>
+                    <div className="card card-hover p-6">
+                      <h3 className="heading-3 mb-2">Active Tasks</h3>
+                      <p className="currency-large text-warning-600">
                         {adminDashboard.task_metrics?.active_tasks || 0}
                       </p>
-                      <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'} caption`}>
+                      <p className="caption">
                         Completed Today: {adminDashboard.task_metrics?.completions_today || 0}
                       </p>
                     </div>
@@ -1457,8 +1470,8 @@ function App() {
                 {/* Admin Actions */}
                 <div className="grid lg:grid-cols-2 gap-6">
                   {/* Send Balance */}
-                  <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-xl shadow-sm p-6 card-hover`}>
-                    <h3 className={`text-lg font-semibold ${darkMode ? 'text-white' : 'text-gray-800'} mb-4 heading-3`}>💰 Send Balance to User</h3>
+                  <div className="card card-hover p-6">
+                    <h3 className="heading-3 mb-4">💰 Send Balance to User</h3>
                     <div className="space-y-4">
                       <input
                         type="text"
@@ -1468,9 +1481,7 @@ function App() {
                           ...adminForms,
                           sendBalance: { ...adminForms.sendBalance, user_id: e.target.value }
                         })}
-                        className={`form-input ${
-                          darkMode ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' : 'border-gray-300'
-                        }`}
+                        className="form-input"
                       />
                       <input
                         type="number"
@@ -1480,9 +1491,7 @@ function App() {
                           ...adminForms,
                           sendBalance: { ...adminForms.sendBalance, amount: e.target.value }
                         })}
-                        className={`form-input ${
-                          darkMode ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' : 'border-gray-300'
-                        }`}
+                        className="form-input"
                       />
                       <input
                         type="text"
@@ -1492,14 +1501,12 @@ function App() {
                           ...adminForms,
                           sendBalance: { ...adminForms.sendBalance, reason: e.target.value }
                         })}
-                        className={`form-input ${
-                          darkMode ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' : 'border-gray-300'
-                        }`}
+                        className="form-input"
                       />
                       <button
                         onClick={adminSendBalance}
                         disabled={loading || !adminForms.sendBalance.user_id || !adminForms.sendBalance.amount}
-                        className="w-full bg-green-600 text-white py-2 rounded-lg font-medium hover:bg-green-700 disabled:opacity-50 transition-colors btn-hover shadow-glow"
+                        className="btn btn-success w-full shadow-glow"
                       >
                         {loading ? (
                           <div className="loading-dots"><div></div><div></div><div></div><div></div></div>
@@ -1511,8 +1518,8 @@ function App() {
                   </div>
 
                   {/* Grant Token */}
-                  <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-xl shadow-sm p-6 card-hover`}>
-                    <h3 className={`text-lg font-semibold ${darkMode ? 'text-white' : 'text-gray-800'} mb-4 heading-3`}>🪙 Grant Token to User</h3>
+                  <div className="card card-hover p-6">
+                    <h3 className="heading-3 mb-4">🪙 Grant Token to User</h3>
                     <div className="space-y-4">
                       <input
                         type="text"
@@ -1522,9 +1529,7 @@ function App() {
                           ...adminForms,
                           grantToken: { ...adminForms.grantToken, user_id: e.target.value }
                         })}
-                        className={`form-input ${
-                          darkMode ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' : 'border-gray-300'
-                        }`}
+                        className="form-input"
                       />
                       <input
                         type="text"
@@ -1534,14 +1539,12 @@ function App() {
                           ...adminForms,
                           grantToken: { ...adminForms.grantToken, token_name: e.target.value }
                         })}
-                        className={`form-input ${
-                          darkMode ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' : 'border-gray-300'
-                        }`}
+                        className="form-input"
                       />
                       <button
                         onClick={adminGrantToken}
                         disabled={loading || !adminForms.grantToken.user_id}
-                        className="w-full bg-blue-600 text-white py-2 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors btn-hover shadow-glow"
+                        className="btn btn-primary w-full shadow-glow"
                       >
                         {loading ? (
                           <div className="loading-dots"><div></div><div></div><div></div><div></div></div>
@@ -1553,8 +1556,8 @@ function App() {
                   </div>
 
                   {/* Boost Token */}
-                  <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-xl shadow-sm p-6 card-hover`}>
-                    <h3 className={`text-lg font-semibold ${darkMode ? 'text-white' : 'text-gray-800'} mb-4 heading-3`}>⚡ Boost User Token</h3>
+                  <div className="card card-hover p-6">
+                    <h3 className="heading-3 mb-4">⚡ Boost User Token</h3>
                     <div className="space-y-4">
                       <input
                         type="text"
@@ -1564,14 +1567,12 @@ function App() {
                           ...adminForms,
                           boostToken: { ...adminForms.boostToken, token_id: e.target.value }
                         })}
-                        className={`form-input ${
-                          darkMode ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' : 'border-gray-300'
-                        }`}
+                        className="form-input"
                       />
                       <button
                         onClick={adminBoostToken}
                         disabled={loading || !adminForms.boostToken.token_id}
-                        className="w-full bg-orange-600 text-white py-2 rounded-lg font-medium hover:bg-orange-700 disabled:opacity-50 transition-colors btn-hover shadow-glow"
+                        className="btn btn-warning w-full shadow-glow"
                       >
                         {loading ? (
                           <div className="loading-dots"><div></div><div></div><div></div><div></div></div>
@@ -1583,8 +1584,8 @@ function App() {
                   </div>
 
                   {/* Create Task */}
-                  <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-xl shadow-sm p-6 card-hover`}>
-                    <h3 className={`text-lg font-semibold ${darkMode ? 'text-white' : 'text-gray-800'} mb-4 heading-3`}>🎯 Create Task</h3>
+                  <div className="card card-hover p-6">
+                    <h3 className="heading-3 mb-4">🎯 Create Task</h3>
                     <div className="space-y-4">
                       <input
                         type="text"
@@ -1594,9 +1595,7 @@ function App() {
                           ...adminForms,
                           createTask: { ...adminForms.createTask, title: e.target.value }
                         })}
-                        className={`form-input ${
-                          darkMode ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' : 'border-gray-300'
-                        }`}
+                        className="form-input"
                       />
                       <textarea
                         placeholder="Task Description"
@@ -1606,9 +1605,7 @@ function App() {
                           createTask: { ...adminForms.createTask, description: e.target.value }
                         })}
                         rows={3}
-                        className={`form-input ${
-                          darkMode ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' : 'border-gray-300'
-                        }`}
+                        className="form-input"
                       />
                       <div className="grid grid-cols-2 gap-2">
                         <input
@@ -1619,9 +1616,7 @@ function App() {
                             ...adminForms,
                             createTask: { ...adminForms.createTask, reward: e.target.value }
                           })}
-                          className={`form-input ${
-                            darkMode ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' : 'border-gray-300'
-                          }`}
+                          className="form-input"
                         />
                         <select
                           value={adminForms.createTask.type}
@@ -1629,9 +1624,7 @@ function App() {
                             ...adminForms,
                             createTask: { ...adminForms.createTask, type: e.target.value }
                           })}
-                          className={`form-input ${
-                            darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'border-gray-300'
-                          }`}
+                          className="form-input"
                         >
                           <option value="one_time">One Time</option>
                           <option value="daily">Daily</option>
@@ -1646,14 +1639,12 @@ function App() {
                           ...adminForms,
                           createTask: { ...adminForms.createTask, external_url: e.target.value }
                         })}
-                        className={`form-input ${
-                          darkMode ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' : 'border-gray-300'
-                        }`}
+                        className="form-input"
                       />
                       <button
                         onClick={adminCreateTask}
                         disabled={loading || !adminForms.createTask.title || !adminForms.createTask.description || !adminForms.createTask.reward}
-                        className="w-full bg-purple-600 text-white py-2 rounded-lg font-medium hover:bg-purple-700 disabled:opacity-50 transition-colors btn-hover shadow-glow"
+                        className="btn btn-purple w-full shadow-glow"
                       >
                         {loading ? (
                           <div className="loading-dots"><div></div><div></div><div></div><div></div></div>
@@ -1666,8 +1657,8 @@ function App() {
                 </div>
 
                 {/* Broadcast Message */}
-                <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-xl shadow-sm p-6 card-hover`}>
-                  <h3 className={`text-lg font-semibold ${darkMode ? 'text-white' : 'text-gray-800'} mb-4 heading-3`}>📢 Broadcast Message</h3>
+                <div className="card card-hover p-6">
+                  <h3 className="heading-3 mb-4">📢 Broadcast Message</h3>
                   <div className="grid lg:grid-cols-2 gap-4">
                     <input
                       type="text"
@@ -1677,9 +1668,7 @@ function App() {
                         ...adminForms,
                         broadcast: { ...adminForms.broadcast, title: e.target.value }
                       })}
-                      className={`form-input ${
-                        darkMode ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' : 'border-gray-300'
-                      }`}
+                      className="form-input"
                     />
                     <div className="grid grid-cols-2 gap-2">
                       <select
@@ -1688,9 +1677,7 @@ function App() {
                           ...adminForms,
                           broadcast: { ...adminForms.broadcast, type: e.target.value }
                         })}
-                        className={`form-input ${
-                          darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'border-gray-300'
-                        }`}
+                        className="form-input"
                       >
                         <option value="info">Info</option>
                         <option value="success">Success</option>
@@ -1703,9 +1690,7 @@ function App() {
                           ...adminForms,
                           broadcast: { ...adminForms.broadcast, priority: e.target.value }
                         })}
-                        className={`form-input ${
-                          darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'border-gray-300'
-                        }`}
+                        className="form-input"
                       >
                         <option value="low">Low</option>
                         <option value="medium">Medium</option>
@@ -1721,14 +1706,12 @@ function App() {
                       broadcast: { ...adminForms.broadcast, message: e.target.value }
                     })}
                     rows={4}
-                    className={`form-input mt-4 ${
-                      darkMode ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' : 'border-gray-300'
-                    }`}
+                    className="form-input mt-4"
                   />
                   <button
                     onClick={adminBroadcast}
                     disabled={loading || !adminForms.broadcast.title || !adminForms.broadcast.message}
-                    className="w-full bg-red-600 text-white py-2 rounded-lg font-medium hover:bg-red-700 disabled:opacity-50 transition-colors mt-4 btn-hover shadow-glow"
+                    className="btn btn-error w-full mt-4 shadow-glow"
                   >
                     {loading ? (
                       <div className="loading-dots"><div></div><div></div><div></div><div></div></div>
@@ -1738,51 +1721,227 @@ function App() {
                   </button>
                 </div>
 
-                {/* Users List */}
-                {adminUsers.length > 0 && (
-                  <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-xl shadow-sm p-6 card-hover`}>
-                    <h3 className={`text-lg font-semibold ${darkMode ? 'text-white' : 'text-gray-800'} mb-4 heading-3`}>👥 All Users</h3>
-                    <div className="overflow-x-auto">
-                      <table className="data-table w-full">
-                        <thead>
-                          <tr>
-                            <th className={`text-left p-3 ${darkMode ? 'text-gray-300 bg-gray-700' : 'text-gray-600 bg-gray-50'}`}>User ID</th>
-                            <th className={`text-left p-3 ${darkMode ? 'text-gray-300 bg-gray-700' : 'text-gray-600 bg-gray-50'}`}>Email</th>
-                            <th className={`text-left p-3 ${darkMode ? 'text-gray-300 bg-gray-700' : 'text-gray-600 bg-gray-50'}`}>Balance</th>
-                            <th className={`text-left p-3 ${darkMode ? 'text-gray-300 bg-gray-700' : 'text-gray-600 bg-gray-50'}`}>Tokens</th>
-                            <th className={`text-left p-3 ${darkMode ? 'text-gray-300 bg-gray-700' : 'text-gray-600 bg-gray-50'}`}>Status</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {adminUsers.slice(0, 10).map((user) => (
-                            <tr key={user.user_id} className={`border-t ${darkMode ? 'border-gray-700 hover:bg-gray-700' : 'border-gray-200 hover:bg-gray-50'} transition-colors`}>
-                              <td className={`p-3 ${darkMode ? 'text-white' : 'text-gray-800'} body-regular`}>{user.user_id}</td>
-                              <td className={`p-3 ${darkMode ? 'text-gray-300' : 'text-gray-600'} body-small`}>{user.email}</td>
-                              <td className={`p-3 ${darkMode ? 'text-green-400' : 'text-green-600'} body-regular`}>
-                                {formatCurrency(user.total_earnings || 0, 'USD')}
-                              </td>
-                              <td className={`p-3 ${darkMode ? 'text-blue-400' : 'text-blue-600'} body-regular`}>
-                                {user.tokens_owned || 0}
-                              </td>
-                              <td className="p-3">
-                                <span className={`badge ${
-                                  user.online_status === 'online' 
-                                    ? 'badge-success status-online' 
-                                    : user.online_status === 'recently_active'
-                                    ? 'badge-warning status-away'
-                                    : 'badge status-offline'
-                                }`}>
-                                  {user.online_status === 'online' ? '🟢 Online' : 
-                                   user.online_status === 'recently_active' ? '🟡 Recently Active' : '⚫ Offline'}
-                                </span>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                {/* Users List - ENHANCED SECTION */}
+                <div className="card card-hover p-6">
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="heading-3">👥 All Users ({adminUsers.length})</h3>
+                    <button
+                      onClick={fetchAdminUsers}
+                      disabled={loading}
+                      className="btn btn-secondary btn-sm"
+                    >
+                      {loading ? (
+                        <div className="loading-dots"><div></div><div></div><div></div></div>
+                      ) : (
+                        '🔄 Refresh Users'
+                      )}
+                    </button>
                   </div>
-                )}
+                  
+                  {loading ? (
+                    <div className="empty-state">
+                      <div className="loading-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
+                      <p className="body-regular text-secondary">Loading users...</p>
+                    </div>
+                  ) : adminUsers.length === 0 ? (
+                    <div className="empty-state">
+                      <div className="empty-state-icon">👥</div>
+                      <h3 className="empty-state-title">No users found</h3>
+                      <p className="empty-state-description">No users have registered yet or there was an error loading users.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {/* Summary Stats */}
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                        <div className="card card-glass p-3 text-center">
+                          <p className="caption">Total Users</p>
+                          <p className="heading-3">{adminUsers.length}</p>
+                        </div>
+                        <div className="card card-glass p-3 text-center">
+                          <p className="caption">Online Now</p>
+                          <p className="heading-3 text-success-600">
+                            {adminUsers.filter(u => u.online_status === 'online').length}
+                          </p>
+                        </div>
+                        <div className="card card-glass p-3 text-center">
+                          <p className="caption">Total Tokens</p>
+                          <p className="heading-3 text-primary">
+                            {adminUsers.reduce((sum, u) => sum + (u.tokens_count || 0), 0)}
+                          </p>
+                        </div>
+                        <div className="card card-glass p-3 text-center">
+                          <p className="caption">Total Earnings</p>
+                          <p className="heading-3 currency-medium currency-positive">
+                            {formatCurrency(adminUsers.reduce((sum, u) => sum + (u.total_earnings || 0), 0), 'USD')}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Users Table */}
+                      <div className="overflow-x-auto">
+                        <table className="data-table w-full">
+                          <thead>
+                            <tr>
+                              <th>User Info</th>
+                              <th>Financial Data</th>
+                              <th>Tokens & IDs</th>
+                              <th>Activity</th>
+                              <th>Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {adminUsers.map((user) => (
+                              <tr key={user.user_id}>
+                                <td>
+                                  <div>
+                                    <p className="font-mono text-sm font-bold text-primary">{user.user_id}</p>
+                                    <p className="text-xs text-secondary truncate max-w-48">{user.email}</p>
+                                    <p className="text-xs text-tertiary">
+                                      Joined: {new Date(user.created_at).toLocaleDateString()}
+                                    </p>
+                                  </div>
+                                </td>
+                                <td>
+                                  <div>
+                                    <p className="currency-small currency-positive font-bold">
+                                      {formatCurrency(user.total_earnings || 0, 'USD')}
+                                    </p>
+                                    <p className="text-xs text-secondary">
+                                      Referrals: {user.referrals_count || 0} 
+                                      ({formatCurrency(user.referral_earnings || 0, 'USD')})
+                                    </p>
+                                    <p className="text-xs text-tertiary">
+                                      Transactions: {user.transactions_count || 0}
+                                    </p>
+                                  </div>
+                                </td>
+                                <td>
+                                  <div>
+                                    <p className="text-sm font-bold text-primary">
+                                      {user.tokens_count || 0} tokens
+                                      <span className="text-xs text-secondary">
+                                        ({user.active_tokens_count || 0} active)
+                                      </span>
+                                    </p>
+                                    {user.token_ids && user.token_ids.length > 0 ? (
+                                      <div className="mt-1">
+                                        <p className="text-xs text-tertiary mb-1">Token IDs:</p>
+                                        <div className="flex flex-wrap gap-1">
+                                          {user.token_ids.slice(0, 3).map((tokenId, index) => (
+                                            <span 
+                                              key={tokenId} 
+                                              className="badge badge-info text-xs font-mono"
+                                              title={tokenId}
+                                            >
+                                              {tokenId.substring(0, 8)}...
+                                            </span>
+                                          ))}
+                                          {user.token_ids.length > 3 && (
+                                            <span className="badge badge-primary text-xs">
+                                              +{user.token_ids.length - 3} more
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <p className="text-xs text-tertiary italic">No tokens yet</p>
+                                    )}
+                                  </div>
+                                </td>
+                                <td>
+                                  <div>
+                                    <span className={`status-indicator ${
+                                      user.online_status === 'online' 
+                                        ? 'status-online' 
+                                        : user.online_status === 'recently_active'
+                                        ? 'status-away'
+                                        : 'status-offline'
+                                    }`}>
+                                      {user.online_status === 'online' ? 'Online' : 
+                                       user.online_status === 'recently_active' ? 'Away' : 'Offline'}
+                                    </span>
+                                    <p className="text-xs text-tertiary mt-1">
+                                      Last login: {user.last_active ? new Date(user.last_active).toLocaleDateString() : 'Never'}
+                                    </p>
+                                    <p className="text-xs text-secondary">
+                                      Value Score: {user.value_score || 0}
+                                    </p>
+                                  </div>
+                                </td>
+                                <td>
+                                  <div className="flex flex-col gap-1">
+                                    <button
+                                      onClick={() => setAdminForms({
+                                        ...adminForms,
+                                        sendBalance: { ...adminForms.sendBalance, user_id: user.user_id }
+                                      })}
+                                      className="btn btn-success btn-sm"
+                                    >
+                                      💰 Send $
+                                    </button>
+                                    <button
+                                      onClick={() => setAdminForms({
+                                        ...adminForms,
+                                        grantToken: { ...adminForms.grantToken, user_id: user.user_id }
+                                      })}
+                                      className="btn btn-primary btn-sm"
+                                    >
+                                      🪙 Grant Token
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {/* Detailed Token Information */}
+                      <div className="mt-6">
+                        <h4 className="heading-4 mb-4">🪙 All Token Details</h4>
+                        <div className="grid gap-4">
+                          {adminUsers.filter(user => user.token_details && user.token_details.length > 0).map(user => (
+                            <div key={`tokens-${user.user_id}`} className="card card-glass p-4">
+                              <h5 className="body-large font-bold text-primary mb-3">
+                                {user.user_id} - Tokens ({user.token_details.length})
+                              </h5>
+                              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                {user.token_details.map(token => (
+                                  <div key={token.token_id} className="card p-3 border border-primary bg-secondary">
+                                    <div className="flex justify-between items-start mb-2">
+                                      <p className="body-small font-bold text-primary">{token.name}</p>
+                                      <span className="badge badge-primary">L{token.boost_level}</span>
+                                    </div>
+                                    <p className="text-xs font-mono text-secondary mb-1">
+                                      ID: {token.token_id.substring(0, 12)}...
+                                    </p>
+                                    <p className="currency-small currency-positive">
+                                      Earned: {formatCurrency(token.total_earnings || 0, 'USD')}
+                                    </p>
+                                    <p className="text-xs text-tertiary">
+                                      Created: {new Date(token.created_at).toLocaleDateString()}
+                                    </p>
+                                    <div className="mt-2 flex gap-1">
+                                      <button
+                                        onClick={() => setAdminForms({
+                                          ...adminForms,
+                                          boostToken: { token_id: token.token_id }
+                                        })}
+                                        className="btn btn-warning btn-sm flex-1"
+                                      >
+                                        ⚡ Boost
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
